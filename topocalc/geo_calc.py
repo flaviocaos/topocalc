@@ -90,6 +90,16 @@ class PointGeodesy:
     dist_geodesica_m: Optional[float] = None
     azimute_deg: Optional[float] = None
 
+    # Preenchido se este ponto caiu num fuso UTM diferente do da BASE e teve
+    # que ser reprojetado para o fuso da BASE antes do cálculo de deltas
+    # (necessário porque coordenadas UTM de fusos diferentes não são
+    # diretamente subtraíveis — cada fuso tem seu próprio meridiano central).
+    reprojected_to_base_zone: bool = False
+    native_utm_zone: Optional[int] = None
+    native_utm_hemisphere: Optional[str] = None
+    native_utm_easting: Optional[float] = None
+    native_utm_northing: Optional[float] = None
+
 
 def compute_utm(lat_deg: float, lon_deg: float) -> tuple[int, str, int, float, float]:
     epsg, hemi, zone = utm_epsg(lat_deg, lon_deg)
@@ -128,10 +138,42 @@ def build_point_geodesy(label: str, lat_rad: float, lon_rad: float, alt_m: float
     )
 
 
+def reproject_to_zone(lat_deg: float, lon_deg: float, target_epsg: int) -> tuple[float, float]:
+    """Reprojeta um ponto lat/lon para um EPSG UTM específico (não necessariamente
+    o fuso "natural" desse ponto). Usado para trazer pontos de fusos vizinhos
+    para o mesmo sistema de coordenadas da BASE antes do cálculo de deltas."""
+    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{target_epsg}", always_xy=True)
+    easting, northing = transformer.transform(lon_deg, lat_deg)
+    return easting, northing
+
+
 def apply_base_relations(base: PointGeodesy, points: list[PointGeodesy]) -> None:
     """Preenche delta E/N/h, distância plana, distância geodésica e azimute
-    de cada ponto em relação à base (in place)."""
+    de cada ponto em relação à base (in place).
+
+    Se um ponto cair num fuso UTM diferente do da BASE, ele é reprojetado
+    para o fuso da BASE antes do cálculo de delta/distância plana — caso
+    contrário a subtração de Este/Norte misturaria dois sistemas de
+    coordenadas diferentes e produziria um resultado sem sentido. A
+    distância geodésica e o azimute (via pyproj.Geod, direto sobre o
+    elipsoide) não são afetados por isso em nenhum caso — servem inclusive
+    como referência cruzada para detectar esse tipo de erro.
+    """
     for p in points:
+        if p.utm_zone != base.utm_zone or p.utm_hemisphere != base.utm_hemisphere:
+            p.native_utm_zone = p.utm_zone
+            p.native_utm_hemisphere = p.utm_hemisphere
+            p.native_utm_easting = p.utm_easting
+            p.native_utm_northing = p.utm_northing
+
+            new_easting, new_northing = reproject_to_zone(p.lat_deg, p.lon_deg, base.utm_epsg)
+            p.utm_zone = base.utm_zone
+            p.utm_hemisphere = base.utm_hemisphere
+            p.utm_epsg = base.utm_epsg
+            p.utm_easting = new_easting
+            p.utm_northing = new_northing
+            p.reprojected_to_base_zone = True
+
         p.delta_e = p.utm_easting - base.utm_easting
         p.delta_n = p.utm_northing - base.utm_northing
         p.delta_h = p.alt_m - base.alt_m

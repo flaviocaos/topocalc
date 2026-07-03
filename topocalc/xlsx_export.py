@@ -154,17 +154,24 @@ def _sheet_pontos_resumo(wb, result: ProcessingResult) -> None:
             ws.cell(row=row, column=18, value=p.azimute_deg)
 
     note_row = len(all_points) + 3
-    ws.cell(
-        row=note_row, column=1,
-        value=(
-            "Nota: colunas marcadas '(fórmula)' são recalculadas nativamente pelo Excel a partir "
-            "das colunas de entrada. Colunas marcadas '(ref. externa)' (UTM, distância geodésica, "
-            "azimute) foram calculadas fora da planilha com pyproj/PROJ (elipsoide WGS84, solução "
-            "geodésica de Karney) e são inseridas como valores de referência, não fórmulas — "
-            "reproduzir a projeção UTM e a solução geodésica elipsoidal em fórmulas nativas do "
-            "Excel não é praticável nem confiável."
-        ),
+    nota_texto = (
+        "Nota: colunas marcadas '(fórmula)' são recalculadas nativamente pelo Excel a partir "
+        "das colunas de entrada. Colunas marcadas '(ref. externa)' (UTM, distância geodésica, "
+        "azimute) foram calculadas fora da planilha com pyproj/PROJ (elipsoide WGS84, solução "
+        "geodésica de Karney) e são inseridas como valores de referência, não fórmulas — "
+        "reproduzir a projeção UTM e a solução geodésica elipsoidal em fórmulas nativas do "
+        "Excel não é praticável nem confiável."
     )
+    if result.cross_zone_points:
+        pontos_str = ", ".join(p.label for p in result.cross_zone_points)
+        nota_texto += (
+            f" Atenção: o(s) ponto(s) {pontos_str} está(ão) num fuso UTM diferente do fuso da "
+            f"BASE e foi(foram) reprojetado(s) para o fuso da BASE (coluna UTM_Zona) para permitir "
+            f"o cálculo de Delta_E/Delta_N/Dist_Plana num único sistema de coordenadas — os "
+            f"valores de UTM_Este_m/UTM_Norte_m destes pontos NÃO são as coordenadas nativas do "
+            f"fuso onde o ponto realmente está, e sim a versão reprojetada para o fuso da BASE."
+        )
+    ws.cell(row=note_row, column=1, value=nota_texto)
     ws.cell(row=note_row, column=1).font = NOTE_FONT
     ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=len(headers))
     ws.cell(row=note_row, column=1).alignment = Alignment(wrap_text=True)
@@ -371,6 +378,16 @@ def _sheet_metodologia(wb, result: ProcessingResult) -> None:
             "- Apenas um arquivo do conjunto apresentou sentenças ZDA; a duração de sessão está "
             "disponível somente para esse arquivo (a base). Isso é esperado para levantamentos com "
             "um único ponto de referência contínuo, não um erro de processamento."
+        )
+    if result.cross_zone_points:
+        pontos_str = ", ".join(p.label for p in result.cross_zone_points)
+        linhas.append(
+            f"- O(s) ponto(s) {pontos_str} está(ão) num fuso UTM diferente do fuso da BASE. Foi(foram) "
+            f"reprojetado(s) automaticamente para o fuso da BASE antes do cálculo de Delta E/N e "
+            f"distância plana (Pitágoras) — subtrair coordenadas de fusos UTM diferentes sem essa "
+            f"reprojeção produziria um resultado incorreto. A distância geodésica e o azimute "
+            f"(calculados diretamente sobre o elipsoide, via pyproj.Geod) não dependem de fuso UTM "
+            f"e servem como referência cruzada independente."
         )
 
     for i, texto in enumerate(linhas, start=1):

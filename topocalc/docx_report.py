@@ -153,6 +153,18 @@ def build_docx_report(result: ProcessingResult, output_dir: Path) -> Path:
         "elipsoidal (solução de Karney) foram realizados com as bibliotecas pyproj/PROJ, sem "
         "reimplementação manual de fórmulas de projeção."
     )
+    if result.cross_zone_points:
+        pontos_str = ", ".join(p.label for p in result.cross_zone_points)
+        document.add_paragraph(
+            f"Atenção — cruzamento de fuso UTM: o(s) ponto(s) {pontos_str} está(ão) naturalmente "
+            f"em fuso UTM diferente do fuso {result.base_geo.native_utm_zone or result.base_geo.utm_zone}"
+            f"{result.base_geo.utm_hemisphere} da BASE. Para permitir o cálculo direto de Delta "
+            f"E/N e distância plana num único sistema de coordenadas, esse(s) ponto(s) foi(foram) "
+            f"reprojetado(s) para o fuso da BASE antes do cálculo — prática padrão para redes "
+            f"geodésicas locais. A distância geodésica e o azimute (calculados diretamente sobre "
+            f"o elipsoide, independente de fuso UTM) não são afetados por esse ajuste e servem "
+            f"como referência cruzada de conferência."
+        ).italic = True
 
     # 3. Coordenadas consolidadas
     document.add_heading("3. Tabela Consolidada de Coordenadas", level=1)
@@ -226,6 +238,16 @@ def build_docx_report(result: ProcessingResult, output_dir: Path) -> Path:
         limitacoes.append(
             "Apenas um arquivo apresentou sentenças ZDA; a duração de sessão está disponível "
             "somente para esse arquivo (a base) — comportamento esperado, não um erro."
+        )
+    if result.cross_zone_points:
+        pontos_str = ", ".join(p.label for p in result.cross_zone_points)
+        limitacoes.append(
+            f"O(s) ponto(s) {pontos_str} está(ão) num fuso UTM diferente do fuso da BASE e foi(foram) "
+            f"reprojetado(s) para o fuso da BASE para permitir o cálculo de deltas/distância plana "
+            f"(ver seção 2, Metodologia). Ao se afastar do meridiano central do fuso da BASE, a "
+            f"distorção de escala da projeção UTM aumenta — para redes muito extensas ou próximas "
+            f"de um limite de fuso, prefira a distância geodésica (coluna 'Dist. geodésica') como "
+            f"referência principal, não a distância plana."
         )
     for item in limitacoes:
         document.add_paragraph(item, style="List Bullet")

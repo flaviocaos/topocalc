@@ -24,6 +24,7 @@ class ProcessingResult:
     base_geo: PointGeodesy
     points_geo: list[PointGeodesy]
     single_zda_note: bool  # True se apenas 1 arquivo tem ZDA > 0
+    cross_zone_points: list[PointGeodesy]  # pontos reprojetados p/ o fuso da BASE
 
     def all_geo(self) -> list[PointGeodesy]:
         return [self.base_geo] + self.points_geo
@@ -50,6 +51,8 @@ def run_pipeline(paths: list[Path], forced_base_name: Optional[str] = None) -> P
     files_with_zda = sum(1 for f in files if f.zda_count > 0)
     single_zda_note = files_with_zda <= 1
 
+    cross_zone_points = [p for p in points_geo if p.reprojected_to_base_zone]
+
     return ProcessingResult(
         files=files,
         base_file=base_file,
@@ -57,4 +60,5 @@ def run_pipeline(paths: list[Path], forced_base_name: Optional[str] = None) -> P
         base_geo=base_geo,
         points_geo=points_geo,
         single_zda_note=single_zda_note,
+        cross_zone_points=cross_zone_points,
     )

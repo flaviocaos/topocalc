@@ -154,6 +154,33 @@ def check_single_zda_note(result: ProcessingResult, report: ValidationReport) ->
         )
 
 
+def check_plana_vs_geodesica(result: ProcessingResult, report: ValidationReport,
+                              tolerance_pct: float = 2.0) -> None:
+    """Confere se a distância plana (UTM/Pitágoras) e a distância geodésica
+    (elipsoidal, independente de fuso) estão próximas. Isso pega justamente o
+    tipo de bug em que um ponto cai num fuso UTM diferente do da BASE e a
+    subtração de coordenadas de fusos diferentes produz um delta sem sentido
+    — nesse caso a distância plana diverge muito da geodésica."""
+    problemas = 0
+    for p in result.points_geo:
+        if p.dist_geodesica_m == 0:
+            continue
+        diff_pct = 100 * abs(p.dist_plana_m - p.dist_geodesica_m) / p.dist_geodesica_m
+        if diff_pct > tolerance_pct:
+            problemas += 1
+            report.fail(
+                f"Ponto '{p.label}': distância plana ({p.dist_plana_m:.3f} m) diverge "
+                f"{diff_pct:.2f}% da distância geodésica ({p.dist_geodesica_m:.3f} m) — "
+                f"acima da tolerância de {tolerance_pct}%. Possível problema de fuso UTM "
+                f"não tratado corretamente."
+            )
+    if problemas == 0:
+        report.passed(
+            "Distância plana e distância geodésica consistentes entre si (dentro de "
+            f"{tolerance_pct}%) para todos os pontos — sem indício de erro de fuso UTM."
+        )
+
+
 def run_all_validations(
     result: ProcessingResult, docx_path: Path, xlsx_path: Path, workdir: Path
 ) -> ValidationReport:
@@ -162,4 +189,5 @@ def run_all_validations(
     check_xlsx_formulas(xlsx_path, report, workdir / "_xlsx_recalc")
     check_cross_consistency(result, xlsx_path, report)
     check_single_zda_note(result, report)
+    check_plana_vs_geodesica(result, report)
     return report
