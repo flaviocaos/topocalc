@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+saida_gns/
+saida_teste/
+saida_teste2/
+amostras_gns/
+*.gns
+!scripts/**/*.gns
+.git/
+.vscode/
+*.jpg
