@@ -1,0 +1,44 @@
+<svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TopoCalc">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&amp;family=IBM+Plex+Mono:wght@500&amp;display=swap');
+      .topo { font-family: 'Poppins', 'Arial', sans-serif; font-weight: 300; }
+      .calc { font-family: 'Poppins', 'Arial', sans-serif; font-weight: 600; }
+      .tagline { font-family: 'IBM Plex Mono', 'Consolas', monospace; font-weight: 500; letter-spacing: 0.12em; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="900" height="300" fill="#F5F5F4"/>
+
+  <!-- ===================== ÍCONE: curvas de nível (topo) + marco + trena de medição (calc) ===================== -->
+  <g transform="translate(150,150)">
+
+    <!-- curvas de nível concêntricas, sugerindo relevo/topografia -->
+    <path d="M -70 40 Q -70 -10 0 -10 Q 70 -10 70 40" fill="none" stroke="#8FC7CC" stroke-width="5" stroke-linecap="round"/>
+    <path d="M -50 40 Q -50 8 0 8 Q 50 8 50 40" fill="none" stroke="#1E8A93" stroke-width="5" stroke-linecap="round"/>
+    <path d="M -28 40 Q -28 24 0 24 Q 28 24 28 40" fill="none" stroke="#6E6F71" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- marco de referência (benchmark) no topo -->
+    <path d="M 0 -56 L 15 -22 L -15 -22 Z" fill="#3A3A39"/>
+    <circle cx="0" cy="-34" r="3" fill="#F5F5F4"/>
+
+    <!-- régua/trena de medição contornando a base, ligando "topo" a "calc" -->
+    <line x1="-88" y1="58" x2="88" y2="58" stroke="#3A3A39" stroke-width="4" stroke-linecap="round"/>
+    <g stroke="#3A3A39" stroke-width="3" stroke-linecap="round">
+      <line x1="-88" y1="52" x2="-88" y2="64"/>
+      <line x1="-58" y1="53" x2="-58" y2="63"/>
+      <line x1="-28" y1="53" x2="-28" y2="63"/>
+      <line x1="2" y1="52" x2="2" y2="64"/>
+      <line x1="32" y1="53" x2="32" y2="63"/>
+      <line x1="62" y1="53" x2="62" y2="63"/>
+      <line x1="88" y1="52" x2="88" y2="64"/>
+    </g>
+  </g>
+
+  <!-- ===================== WORDMARK ===================== -->
+  <g transform="translate(330,138)">
+    <text x="0" y="0" class="topo" font-size="72" fill="#6E6F71">Topo<tspan class="calc" fill="#1E8A93">Calc</tspan></text>
+    <text x="2" y="40" class="tagline" font-size="15" fill="#9A9A98">PACOTE GEODÉSICO A PARTIR DO ARQUIVO .GNS</text>
+    <text x="2" y="64" class="tagline" font-size="13" fill="#B9B9B7">HUBGEO — ESTUDOS E PROJECTOS</text>
+  </g>
+</svg>

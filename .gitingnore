@@ -1,0 +1,40 @@
+# Ambiente virtual Python
+.venv/
+venv/
+env/
+
+# Cache / bytecode Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Saídas geradas pelo TopoCalc (não versionar entregáveis, só o código)
+saida_gns/
+saida_teste/
+saida_teste2/
+amostras_gns/
+*_saida/
+_charts/
+_xlsx_recalc/
+
+# Arquivos de entrada reais (dados de levantamento — não versionar)
+*.gns
+!scripts/**/*.gns
+
+# Artefatos de conversão/inspeção local (pdftoppm, etc.)
+page-*.jpg
+xlsxpage-*.jpg
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# SO
+.DS_Store
+Thumbs.db
+
+# Distribuição Python (caso vire pacote instalável no futuro)
+build/
+dist/
+*.egg-info/
