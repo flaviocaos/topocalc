@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Resultados{% endblock %}
+{% block body %}
+{% set r = p.results %}{% set a = r.adjustment %}
+<div class="steps"><span>1. Análise dos arquivos</span><span>2. Revisão</span><span>3. Processamento</span><span class="on">4. Resultados</span></div>
+<h1>{{ p.title }}</h1>
+<p class="lead">{{ p.message }}</p>
+
+<div class="kpis">
+  <div class="kpi"><b>{{ r.points|length }}</b><span>pontos com coordenadas</span></div>
+  <div class="kpi"><b>{{ a.n_vectors }}</b><span>vetores no ajustamento{% if a.n_excluded %} ({{ a.n_excluded }} excluídos){% endif %}</span></div>
+  <div class="kpi"><b>{{ '%.2f'|format(a.sigma0_sq) if a.dof else '—' }}</b><span>σ0² (crítico {{ '%.2f'|format(a.f_crit) if a.dof else '—' }})</span></div>
+  <div class="kpi"><b>{% if not a.dof %}<span class="pill warn">sem redundância</span>{% elif a.global_test_passed %}<span class="pill ok">aprovado</span>{% else %}<span class="pill bad">reprovado</span>{% endif %}</b><span>teste global ({{ a.dof }} g.l.)</span></div>
+</div>
+{% if a.unconnected %}<div class="notice">Sem ligação com o controle (sem coordenadas): {{ a.unconnected|join(', ') }}</div>{% endif %}
+
+<h2>Entregáveis</h2>
+<div class="card">
+{% for f in outputs %}{% if f.startswith('pacote_') %}
+<p><a class="btn" href="{{ url_for('download', pid=p.id, fname=f) }}">Baixar pacote completo (.zip)</a></p>
+{% endif %}{% endfor %}
+<p>{% for f in outputs %}{% if not f.startswith('pacote_') %}<a href="{{ url_for('download', pid=p.id, fname=f) }}">{{ f }}</a>{{ ' · ' if not loop.last }}{% endif %}{% endfor %}</p>
+</div>
+
+<h2>Coordenadas finais — UTM {{ r.points[0].zone }}{{ r.points[0].hemisphere }}, WGS 84</h2>
+<div class="tbl"><table>
+<tr><th>Ponto</th><th class="n">E (m)</th><th class="n">N (m)</th><th class="n">h (m)</th><th class="n">N geoidal</th>
+<th class="n">H (m)</th><th class="n">σE</th><th class="n">σN</th><th class="n">σh</th><th>Vetores</th><th>Tipo</th></tr>
+{% for pt in r.points %}
+<tr>
+  <td><b>{{ pt.name }}</b></td>
+  <td class="n">{{ '%.3f'|format(pt.E) }}</td><td class="n">{{ '%.3f'|format(pt.N) }}</td>
+  <td class="n">{{ '%.3f'|format(pt.h) }}</td><td class="n">{{ '%.3f'|format(pt.N_geoid) }}</td>
+  <td class="n">{{ '%.3f'|format(pt.H) }}</td>
+  <td class="n">{{ '%.3f'|format(pt.sE) }}</td><td class="n">{{ '%.3f'|format(pt.sN) }}</td><td class="n">{{ '%.3f'|format(pt.sU) }}</td>
+  <td>{{ pt.vectors.fixa }} fixo(s){% if pt.vectors.flutuante %}, {{ pt.vectors.flutuante }} flut.{% endif %}</td>
+  <td>{% if pt.type=='controle' %}<span class="pill info">controle</span>{% else %}ajustado{% endif %}</td>
+</tr>
+{% endfor %}
+</table></div>
+<p class="note">Geoide: {{ r.geoid.model }}{% if r.geoid.controls %} (deslocamento {{ '%+.3f'|format(r.geoid.offset) }} m){% endif %}.
+Precisões em metros (1σ).</p>
+
+<h2>Linhas de base e resíduos</h2>
+<form method="post" action="{{ url_for('readjust', pid=p.id) }}">
+<p class="note">Marque vetores para excluir do ajustamento (ex.: |w| &gt; 3,29) e clique em <b>Reajustar</b> —
+não é preciso reprocessar.</p>
+<div class="tbl"><table>
+<tr><th>Excluir</th><th>Dia</th><th>Base → Rover</th><th class="n">km</th><th class="n">min</th><th>Solução</th><th class="n">Ratio</th>
+<th class="n">Ida−volta (mm)</th><th class="n">Resíduo E/N/U (mm)</th><th class="n">|w|</th><th>Situação</th><th>Observações</th></tr>
+{% set obs = {} %}{% for o in r.observations %}{% set _ = obs.update({o.id: o}) %}{% endfor %}
+{% for b in p.baselines if b.result %}{% set x = b.result %}{% set o = obs.get(x.id) %}
+<tr class="{{ 'bad' if b.excluded or x.solution=='falhou' or (o and o.flag=='rejeitar') else ('fl' if x.solution=='flutuante' or (o and o.flag=='atenção') else '') }}">
+  <td><input type="checkbox" name="excluir" value="{{ b.id }}" {{ 'checked' if b.excluded }} {{ 'disabled' if x.solution=='falhou' }}></td>
+  <td>{{ x.day|day }}</td><td style="white-space:nowrap">{{ x.base }} → {{ x.rover }}</td>
+  <td class="n">{{ '%.3f'|format(x.length_m/1000) }}</td><td class="n">{{ x.duration_min|round|int }}</td>
+  <td>{% if x.solution=='fixa' %}<span class="pill ok">fixa</span>{% elif x.solution=='flutuante' %}<span class="pill warn">flutuante</span>{% else %}<span class="pill bad">falhou</span>{% endif %}</td>
+  <td class="n">{{ '%.1f'|format(x.ratio) if x.ratio else '' }}</td>
+  <td class="n">{{ x.fwd_bwd_mm|map('round')|map('int')|join(' / ') if x.fwd_bwd_mm else '' }}</td>
+  <td class="n">{{ o.v_enu_mm|map('round', 1)|join(' / ') if o else '' }}</td>
+  <td class="n">{{ '%.2f'|format(o.w_max) if o else '' }}</td>
+  <td>{% if b.excluded %}excluída{% elif o %}{{ o.flag }}{% endif %}</td>
+  <td class="note">{{ x.notes|join(' ') }}</td>
+</tr>
+{% endfor %}
+</table></div>
+<p style="margin-top:14px"><button class="btn" type="submit">Reajustar</button>
+<a class="btn sec" href="{{ url_for('project', pid=p.id, revisar=1) }}">Voltar à revisão (reprocessar)</a></p>
+</form>
+
+{% if r.loops %}
+<h2>Fechamento de triângulos</h2>
+<div class="tbl"><table>
+<tr><th>Triângulo</th><th class="n">Perímetro (km)</th><th class="n">E / N / U (mm)</th><th class="n">Total (mm)</th><th class="n">ppm</th></tr>
+{% for l in r.loops|sort(attribute='ppm', reverse=True) %}
+<tr class="{{ 'fl' if l.ppm > 3 }}"><td>{{ l.points|join(' – ') }}</td><td class="n">{{ '%.2f'|format(l.perimeter_m/1000) }}</td>
+<td class="n">{{ l.mis_enu_mm|map('round', 1)|join(' / ') if l.mis_enu_mm else '' }}</td>
+<td class="n">{{ '%.1f'|format(l.misclosure_mm) }}</td><td class="n">{{ '%.2f'|format(l.ppm) }}</td></tr>
+{% endfor %}
+</table></div>
+{% endif %}
+
+<h2>Registro</h2>
+<pre class="log">{{ p.log[-40:]|join('\n') }}</pre>
+<form method="post" action="{{ url_for('delete', pid=p.id) }}" onsubmit="return confirm('Excluir este projeto e todos os arquivos?')">
+<button class="btn danger" type="submit">Excluir projeto</button></form>
+{% endblock %}

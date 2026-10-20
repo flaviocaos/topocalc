@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Erro{% endblock %}
+{% block body %}
+<h1>{{ p.title }}</h1>
+<div class="card">
+  <p><span class="pill bad">erro</span> {{ p.message }}</p>
+  <pre class="log">{{ p.log[-20:]|join('\n') }}</pre>
+  <p>
+    {% if p.occupations %}<a class="btn" href="{{ url_for('project', pid=p.id, revisar=1) }}">Voltar à revisão</a>{% endif %}
+    <a class="btn sec" href="{{ url_for('index') }}">Novo processamento</a>
+  </p>
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Processando{% endblock %}
+{% block body %}
+<div class="steps">
+  <span class="{{ 'on' if p.stage in ('upload','analyze') }}">1. Análise dos arquivos</span>
+  <span>2. Revisão</span>
+  <span class="{{ 'on' if p.stage in ('process','adjust') }}">3. Processamento</span>
+  <span>4. Resultados</span>
+</div>
+<h1>{{ p.title }}</h1>
+<div class="card">
+  <p id="msg">{{ p.message or 'Iniciando…' }}</p>
+  <div class="bar"><div id="bar" style="width:{{ p.progress or 0 }}%"></div></div>
+  <p class="note" id="pct">{{ p.progress or 0 }} %</p>
+  <pre class="log" id="log">{{ p.log[-12:]|join('\n') }}</pre>
+  <p class="note">Pode fechar esta página: o processamento continua no servidor. Linhas de base longas
+  levam de 30 s a alguns minutos cada.</p>
+</div>
+<script>
+async function poll(){
+  try{
+    const r=await fetch("{{ url_for('status', pid=p.id) }}",{cache:"no-store"});
+    const s=await r.json();
+    document.getElementById('msg').textContent=s.message||'';
+    document.getElementById('bar').style.width=(s.progress||0)+'%';
+    document.getElementById('pct').textContent=(s.progress||0)+' %';
+    const l=document.getElementById('log'); l.textContent=s.log.join('\n'); l.scrollTop=l.scrollHeight;
+    if(s.status!=='running'&&s.status!=='created'){location.href="{{ url_for('project', pid=p.id) }}";return}
+  }catch(e){}
+  setTimeout(poll,2000);
+}
+setTimeout(poll,1500);
+</script>
+{% endblock %}

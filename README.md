@@ -2,120 +2,161 @@
 
 ![TopoCalc](assets/topocalc_logo.png)
 
-Ferramenta em Python (CLI + interface web opcional) para processar arquivos
-brutos `.GNS` de receptores GNSS Hi-Target/Champion e gerar automaticamente
-um pacote de entregáveis geodésicos: relatório `.docx`/`.pdf`, `.kml` e
-planilha `.xlsx` — todos com o logo do TopoCalc embutido.
+Pós-processamento GNSS a partir dos arquivos brutos **`.GNS` da Hi-Target**
+(D8 Pro, V90 e outros), do jeito que o topógrafo envia do campo:
 
-## ⚠️ Aviso importante
+```
+.GNS  →  RINEX 3.04  →  linhas de base (RTKLIB)  →  ajustamento em rede  →  coordenadas finais
+                                                                         →  relatório .docx/.pdf, planilha .xlsx,
+                                                                            KML, CSV e RINEX
+```
 
-O formato `.GNS` é **proprietário e não documentado oficialmente** pelo
-fabricante. A extração binária usada aqui (offset `0x5A`, latitude/longitude
-em radianos como `float64` little-endian, altitude em metros como `float32`
-little-endian) foi obtida por **engenharia reversa** e validação manual
-cruzada em arquivos dos modelos V90/HITV90 e D8 Pro/HITV200 (firmwares 90.0
-e 100.0). Não há garantia de que o layout se mantenha em outros modelos,
-firmwares ou versões de formato — trate os resultados como preliminares e
-confira com o processamento oficial do fabricante sempre que possível.
+Funciona pela interface web (Render ou local) e pela linha de comando.
 
-Esta ferramenta **não realiza processamento diferencial** (RINEX/baseline).
-As coordenadas usadas são as gravadas pelo próprio receptor no arquivo
-`.GNS`, sem correção diferencial, e sem informação de altura de antena,
-PDOP ou resíduos.
+## O que ele faz
 
-## Instalação
+1. **Lê os `.GNS`** — cabeçalho (data, altura da antena, receptor, série) e
+   as observações brutas nos dois formatos internos usados pela Hi-Target:
+   - placa **NovAtel** (D8 Pro): observações e efemérides GLONASS/Galileo pelo
+     RTKLIB; efemérides GPS (log GPSEPHEM) por decodificador próprio;
+   - placa **Trimble** (V90): registro **RT27** por decodificador próprio —
+     não existe conversor aberto para esse registro — e efemérides GPS pelo
+     RTKLIB (RT17).
+2. **Monta o projeto**: agrupa por dia, sugere o nome do marco pelo nome do
+   arquivo, calcula posição aproximada (SPP), avisa quando dois arquivos estão
+   no mesmo lugar com nomes diferentes e propõe as linhas de base (pares que
+   rastrearam juntos ≥ 30 min).
+3. **Revisão pelo usuário**: nomes dos marcos, alturas de antena, marcos de
+   controle (UTM ou geográficas; h e/ou H) e quais linhas processar.
+4. **Processa as linhas de base** com o RTKLIB demo5, a partir do controle,
+   em ondas (cada linha usa como base um ponto já determinado):
+   - linhas < 5 km: L1+L2, ambiguidades fixadas para frente e para trás;
+   - linhas longas: ionosfera e troposfera estimadas, solução flutuante e
+     tentativa de fixação nos dois sentidos. A fixa só é aceita se ida e volta
+     concordarem e se bater com a flutuante — em linhas longas o RTKLIB às
+     vezes "fixa" ambiguidades erradas, e esse teste as descarta.
+5. **Ajusta a rede** (mínimos quadrados 3D, um ou vários controles, teste
+   global, teste w de Baarda por vetor, fechamento de triângulos). Vetores
+   suspeitos podem ser excluídos e a rede reajustada sem reprocessar.
+6. **Altimetria**: H = h − N, com EGM96 embutido e deslocado para coincidir com
+   a ondulação observada nos controles que têm H.
+7. **Entregáveis**: relatório técnico (.docx e .pdf), planilha (.xlsx com
+   coordenadas, geodésicas, linhas de base, resíduos, fechamentos, arquivos e
+   controle), KML (pontos + vetores coloridos por solução), CSV e RINEX
+   (obs + navegação por dia, com marco, antena e posição no cabeçalho).
+
+### Validação
+
+Testado com o levantamento HCB (Angola, out/2026: 12 arquivos, 3 dias, 15
+linhas de 0,04 a 35 km, receptores D8 Pro e V90). Comparado ao processamento
+no Leica Infinity com órbitas precisas: diferenças de 0–2 cm na horizontal e
+até ~9 cm na altura elipsoidal nos pontos a 50 km do controle — dentro das
+precisões (2σ) que o próprio TopoCalc informa para esses pontos. Para linhas
+acima de ~20 km, envie órbitas e relógios precisos (SP3 + CLK) para melhorar.
+
+## Interface web
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
+# RTKLIB: veja "RTKLIB" abaixo
+python -m topocalc.web_app          # http://127.0.0.1:5000
 ```
 
-Para gerar o PDF, é necessário ter o **LibreOffice** instalado
-(`soffice`/`libreoffice` no PATH). Sem ele, use `--skip-pdf`.
+Fluxo: **enviar .GNS → análise (segundos) → revisão → processamento (minutos,
+com barra de progresso) → resultados → baixar pacote**. A página de progresso
+pode ser fechada; o processamento continua no servidor.
 
-## Uso — CLI
+### Variáveis de ambiente
+
+| variável | padrão | uso |
+|---|---|---|
+| `TOPOCALC_PASSWORD` | — | se definida, pede senha (qualquer usuário). **Defina no Render.** |
+| `TOPOCALC_DATA_DIR` | `<tmp>/topocalc_projects` | pasta dos projetos |
+| `TOPOCALC_KEEP_DAYS` | `7` | apaga projetos mais antigos que isso |
+| `TOPOCALC_RTKLIB_DIR` | — | pasta com `convbin` e `rnx2rtkp` (se não estiverem em `topocalc/bin` nem no PATH) |
+| `TOPOCALC_WORKERS` | `2` | linhas de base processadas em paralelo |
+| `TOPOCALC_MAX_UPLOAD_MB` | `1500` | limite do envio |
+
+## Linha de comando
 
 ```bash
-python -m topocalc.cli \
-  --input estacao_base.gns ponto_01.gns ponto_02.gns ponto_03.gns \
-  --output ./saida_gns
+# ver o que há nos arquivos
+python -m topocalc.cli analisar -i dados/*.GNS -p ./projeto
+
+# processar (controle + correções de nome e altura)
+python -m topocalc.cli processar -p ./projeto \
+    --controle "HBD01;utm;683668.738;9067058.188;33S;656.4086;648.3203" \
+    --renomear HBD1=HBD01 --renomear HCB02=HCB2 --renomear HC10=HCB10 \
+    --altura HCB22810.GNS=1.694
+
+# excluir vetores e reajustar
+python -m topocalc.cli reajustar -p ./projeto --excluir HCB22810-HCB62810
 ```
 
-Opções:
+Controle: `"NOME;utm;E;N;FUSO;h;H"` ou `"NOME;geo;LAT;LON;h;H"` (H opcional).
 
-- `--base NOME_DO_ARQUIVO` — força qual arquivo é a BASE. Se omitido, o app
-  detecta automaticamente o arquivo com maior número de sentenças `ZDA`.
-- `--skip-pdf` — pula a conversão para PDF (útil sem LibreOffice).
-- `--skip-validation` — pula as validações automáticas ao final.
+## RTKLIB
 
-Saída (na pasta `--output`):
-
-- `relatorio_geodesico.docx` e `relatorio_geodesico.pdf` (com o logo do
-  TopoCalc na capa)
-- `pontos_levantamento.kml`
-- `planilha_geodesica.xlsx` (com aba "Capa" trazendo o logo)
-
-## Uso — Interface Web
+O processamento usa o **RTKLIB demo5** (rtklibexplorer), versão fixa
+`81943c19`. O `Dockerfile` já compila e instala. Para rodar fora do Docker:
 
 ```bash
-python -m topocalc.web_app
+git clone https://github.com/rtklibexplorer/RTKLIB.git && cd RTKLIB
+git checkout 81943c19ac5ab60ad34355bfbe12292f11a29894
+make -C app/consapp/convbin/gcc
+make -C app/consapp/rnx2rtkp/gcc LDLIBS="-lm -lpthread"
+cp app/consapp/convbin/gcc/convbin app/consapp/rnx2rtkp/gcc/rnx2rtkp <TopoCalc>/topocalc/bin/
 ```
 
-Abra `http://127.0.0.1:5000` (cabeçalho com o ícone do TopoCalc), envie os
-arquivos `.GNS` e baixe o `pacote_geodesico.zip` com os 4 entregáveis.
+## Deploy no Render
 
-## Gerar arquivos de amostra (para testar sem hardware real)
+O `render.yaml` cria um serviço Docker. Observações:
 
-```bash
-python scripts/make_sample_gns.py ./amostras_gns
-python -m topocalc.cli --input ./amostras_gns/*.gns --output ./saida_teste
-```
+- **Plano**: o processamento usa CPU. No *free* (0,1 CPU) um levantamento de
+  um dia leva dezenas de minutos e o serviço hiberna sem uso. Use *starter*
+  ou, melhor, *standard*.
+- **Senha**: defina `TOPOCALC_PASSWORD` no painel — sem ela qualquer pessoa
+  com o link pode enviar arquivos.
+- **Arquivos**: o disco do Render é apagado a cada deploy/reinício. Baixe o
+  pacote ao terminar, ou adicione um disco persistente montado em `/data`.
+- Um único processo (`gunicorn -w 1 --threads 8`): as tarefas rodam em
+  segundo plano dentro dele. Não aumente `-w`.
 
-> Os arquivos gerados por `make_sample_gns.py` são **sintéticos**, apenas
-> para testar o pipeline ponta a ponta — não são arquivos reais de receptor.
+## Limitações conhecidas
 
-## Validações automáticas
+- **Calibração de antena** (centro de fase) não é aplicada: os `.GNS` não
+  trazem o modelo da antena. Com modelos diferentes nas pontas, a altura pode
+  variar alguns centímetros.
+- Sem órbitas precisas, o erro de órbita entra com ~0,1–0,5 ppm.
+- GLONASS e BeiDou ficam fora do processamento (GPS + Galileo): o viés
+  GLONASS entre receptores de fabricantes diferentes atrapalha a fixação, e
+  o BeiDou desses receptores só grava uma frequência.
+- Formato `.GNS` obtido por engenharia reversa (D8 Pro e V90, firmware
+  100.0/90.0). Outros modelos podem precisar de ajustes.
 
-A cada execução (a menos que `--skip-validation`), o app confere:
-
-1. Que os valores numéricos batem entre docx/kml e a planilha xlsx.
-2. Que nenhuma tabela do relatório `.docx` ultrapassa a largura útil da
-   página.
-3. Que a planilha `.xlsx` recalcula sem erros de fórmula (`#REF!`,
-   `#VALUE!`, `#DIV/0!`, `#N/A`, `#NAME?`), via recálculo com LibreOffice
-   headless.
-4. Que o caso de apenas 1 arquivo com sentenças `ZDA` é tratado como
-   observação informativa, não como erro.
-
-## Identidade visual
-
-- `assets/topocalc_logo.svg` / `.png` — logo completo (ícone + wordmark).
-- `assets/topocalc_icon.svg` / `.png` — ícone isolado, para favicon/avatar.
-
-Paleta: teal `#1E8A93`, teal claro `#8FC7CC`, cinza `#6E6F71`, tinta
-`#3A3A39` — na mesma linha de cor da identidade visual da HubGeo.
-
-## Estrutura do projeto
+## Estrutura
 
 ```
 topocalc/
-  __init__.py
-  assets.py           # localização dos arquivos de logo
-  parser.py            # leitura binária/ASCII dos arquivos .GNS
-  geo_calc.py            # conversões e cálculos geodésicos (pyproj)
-  pipeline.py              # orquestra parser + geo_calc num resultado único
-  docx_report.py            # relatório Word (com logo na capa)
-  pdf_report.py               # conversão docx -> pdf (LibreOffice)
-  kml_export.py                 # exportação KML
-  xlsx_export.py                  # planilha com fórmulas nativas + aba Capa
-  charts.py                        # gráficos matplotlib (croqui + distâncias)
-  validate.py                        # validações automáticas
-  cli.py                               # interface de linha de comando
-  web_app.py                            # interface web (Flask), com o logo
-assets/
-  topocalc_logo.svg / .png              # logo completo
-  topocalc_icon.svg / .png                # ícone isolado
-scripts/
-  make_sample_gns.py                       # gerador de .GNS sintéticos p/ teste
+  gnss/
+    gns_file.py      cabeçalho do .GNS e detecção do formato interno
+    rt27.py          decodificador Trimble RT27 → RINEX 3.04
+    novatel_eph.py   efemérides GPS NovAtel (GPSEPHEM) → RINEX nav
+    rinex_tools.py   conversão por arquivo, junção de navegação, cabeçalhos
+    rtklib.py        chamadas ao convbin / rnx2rtkp, SPP
+    baseline.py      processamento e validação de uma linha de base
+    adjust.py        ajustamento em rede, testes estatísticos, triângulos
+    geodesy.py       ECEF/geodésicas/UTM, EGM96
+    project.py       orquestração (análise, processamento, reajuste)
+  reports/           relatório docx/pdf, xlsx, kml, csv, zip RINEX
+  templates/, static/  interface web
+  web_app.py         Flask
+  cli.py             linha de comando
+  data/egm96_15min.npz
+tests/               testes (o de dados reais usa TOPOCALC_TEST_DATA)
+```
+
+```bash
+pip install pytest && python -m pytest -q tests
+TOPOCALC_TEST_DATA=/caminho/dos/GNS python -m pytest -q tests/test_real_data.py
 ```

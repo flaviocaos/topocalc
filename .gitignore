@@ -38,3 +38,9 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+# Dados GNSS e projetos locais
+*.GNS
+*.sp3
+*.clk
+projeto*/
+topocalc/bin/

@@ -2,9 +2,24 @@ services:
   - type: web
     name: topocalc
     runtime: docker
-    plan: free
+    # O processamento GNSS usa CPU de verdade: no plano "free" (0,1 CPU) um
+    # levantamento de um dia leva dezenas de minutos e o serviço hiberna.
+    # "starter" funciona; "standard" (1 CPU, 2 GB) é o recomendado.
+    plan: starter
     dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
     envVars:
       - key: PORT
         value: 8000
-    healthCheckPath: /
+      - key: TOPOCALC_PASSWORD
+        sync: false          # defina no painel do Render para proteger o acesso
+      - key: TOPOCALC_SECRET_KEY
+        generateValue: true
+      - key: TOPOCALC_WORKERS
+        value: 2
+    # Para manter os projetos entre deploys, crie um disco persistente
+    # (planos pagos) e aponte TOPOCALC_DATA_DIR para ele:
+    # disk:
+    #   name: projetos
+    #   mountPath: /data
+    #   sizeGB: 5

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}TopoCalc{% endblock %} — TopoCalc</title>
+<link rel="icon" href="{{ url_for('static', filename='icon.png') }}">
+<style>
+:root{--teal:#1E8A93;--teal-d:#17707A;--teal-l:#E3F1F2;--ink:#3A3A39;--gray:#6E6F71;--line:#DADBD9;
+--bg:#F5F5F4;--card:#fff;--warn:#B26B00;--warn-l:#FFF4E0;--bad:#B3261E;--bad-l:#FDECEA;--ok:#2E7D32;--ok-l:#E8F5E9}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
+header{background:#fff;border-bottom:1px solid var(--line)}
+header .in{max-width:1180px;margin:0 auto;padding:10px 20px;display:flex;align-items:center;gap:16px}
+header img{height:40px}
+header a{color:inherit;text-decoration:none}
+header .v{margin-left:auto;color:var(--gray);font-size:13px}
+main{max-width:1180px;margin:0 auto;padding:24px 20px 60px}
+h1{font-size:24px;margin:0 0 6px}
+h2{font-size:18px;margin:28px 0 10px;color:var(--teal-d)}
+p.lead{color:var(--gray);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+label{font-weight:600;display:block;margin:10px 0 4px}
+input[type=text],input[type=number],select{padding:7px 9px;border:1px solid #C9CAC8;border-radius:6px;font:inherit;width:100%;background:#fff}
+input.sm{width:90px}input.md{width:130px}
+input[type=file]{font:inherit}
+.btn{display:inline-block;padding:9px 18px;border-radius:7px;border:1px solid var(--teal);background:var(--teal);color:#fff;
+font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+.btn:hover{background:var(--teal-d)}
+.btn.sec{background:#fff;color:var(--teal-d)}
+.btn.sec:hover{background:var(--teal-l)}
+.btn.danger{background:#fff;color:var(--bad);border-color:var(--bad)}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.row>div{flex:1;min-width:120px}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:#fff}
+th{background:var(--teal);color:#fff;font-weight:600;padding:7px 8px;text-align:left;white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid #ECECEA;vertical-align:middle}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.fl td{background:var(--warn-l)} tr.bad td{background:var(--bad-l)} tr.off td{color:#A0A09E}
+.pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:12px;font-weight:600}
+.pill.ok{background:var(--ok-l);color:var(--ok)}.pill.warn{background:var(--warn-l);color:var(--warn)}
+.pill.bad{background:var(--bad-l);color:var(--bad)}.pill.info{background:var(--teal-l);color:var(--teal-d)}
+.flash{background:var(--bad-l);color:var(--bad);padding:10px 14px;border-radius:8px;margin:8px 0}
+.note{color:var(--gray);font-size:13px}
+.notice{background:var(--warn-l);border-left:4px solid var(--warn);padding:10px 14px;border-radius:6px;margin:8px 0}
+.bar{height:10px;background:#E4E5E3;border-radius:6px;overflow:hidden}
+.bar>div{height:100%;background:var(--teal);transition:width .4s}
+pre.log{background:#2B2B2A;color:#E8E8E6;padding:12px 14px;border-radius:8px;font-size:12.5px;max-height:320px;overflow:auto;white-space:pre-wrap}
+.steps{display:flex;gap:6px;margin:0 0 18px;flex-wrap:wrap}
+.steps span{padding:4px 12px;border-radius:20px;background:#E4E5E3;color:var(--gray);font-size:13px}
+.steps span.on{background:var(--teal);color:#fff}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi b{display:block;font-size:22px}
+.kpi span{color:var(--gray);font-size:13px}
+a{color:var(--teal-d)}
+</style>
+</head>
+<body>
+<header><div class="in">
+  <a href="{{ url_for('index') }}"><img src="{{ url_for('static', filename='logo.png') }}" alt="TopoCalc"></a>
+  <span class="v">Pós-processamento GNSS • v{{ version }}</span>
+</div></header>
+<main>
+{% with msgs = get_flashed_messages() %}{% for m in msgs %}<div class="flash">{{ m }}</div>{% endfor %}{% endwith %}
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Revisão{% endblock %}
+{% block body %}
+<div class="steps"><span>1. Análise dos arquivos</span><span class="on">2. Revisão</span><span>3. Processamento</span><span>4. Resultados</span></div>
+<h1>Revisão dos dados de campo</h1>
+<p class="lead">Confira o que foi lido dos arquivos. O nome do marco vem do nome do arquivo e a altura da antena
+vem do receptor — corrija o que o topógrafo anotou diferente. Arquivos do mesmo marco em dias diferentes
+precisam ter <b>o mesmo nome</b> para a rede se ligar.</p>
+
+<form method="post" action="{{ url_for('review', pid=p.id) }}" id="f">
+<div class="card">
+  <label>Nome do levantamento</label>
+  <input type="text" name="title" value="{{ p.title }}">
+</div>
+
+{% if p.suggestions %}
+<h2>Atenção</h2>
+{% for s in p.suggestions %}<div class="notice">{{ s }}</div>{% endfor %}
+{% endif %}
+
+<h2>1. Arquivos e marcos</h2>
+<div class="tbl"><table>
+<tr><th>Usar</th><th>Arquivo</th><th>Dia</th><th>Início–fim (GPS)</th><th>Receptor</th><th>Marco</th>
+<th>Altura antena (m)</th><th>Posição aproximada</th><th>Avisos</th></tr>
+{% for o in p.occupations %}
+<tr>
+  <td><input type="checkbox" name="inc_{{ o.id }}" {{ 'checked' if o.include }}></td>
+  <td>{{ o.file }}</td>
+  <td>{{ o.day|day }}</td>
+  <td>{{ o.first|hm }}–{{ o.last|hm }} <span class="note">({{ o.n_epochs }} ép., {{ o.interval_s|int }} s)</span></td>
+  <td>{{ o.receiver }} <span class="note">{{ 'NovAtel' if o.format=='novatel' else 'Trimble' }}</span></td>
+  <td><input type="text" class="md occname" data-occ="{{ o.id }}" name="name_{{ o.id }}" value="{{ o.name }}" required></td>
+  <td><input type="text" class="sm" name="ant_{{ o.id }}" value="{{ '%.3f'|format(o.antenna_height) }}"></td>
+  <td class="note">{% if o.approx_llh %}{{ o.approx_llh[0]|dms('lat') }}<br>{{ o.approx_llh[1]|dms('lon') }}{% else %}—{% endif %}</td>
+  <td class="note">{{ o.header_warnings|join('; ') }}</td>
+</tr>
+{% endfor %}
+</table></div>
+<p class="note">Altura da antena: vertical, do marco até o ponto de referência da antena (ARP).</p>
+
+<h2>2. Controle (coordenadas conhecidas)</h2>
+<p class="note">Informe pelo menos um marco com coordenadas conhecidas em WGS 84 (ou SIRGAS/ITRF compatível). O nome
+deve ser igual ao do marco na tabela acima. Com a altitude ortométrica H, o geoide EGM96 é ajustado a ela.</p>
+<div id="ctrls">
+{% set ctrls = p.controls if p.controls else [{}] %}
+{% for c in ctrls %}{% set i = loop.index0 %}{% set inp = c.input or {} %}
+<div class="card ctrl" data-i="{{ i }}">
+  <div class="row">
+    <div><label>Marco</label><input type="text" name="c{{ i }}_name" value="{{ c.name or '' }}" placeholder="ex.: HBD01"></div>
+    <div><label>Sistema</label><select name="c{{ i }}_system" onchange="sys(this)">
+      <option value="utm" {{ 'selected' if inp.system!='geo' }}>UTM (E, N)</option>
+      <option value="geo" {{ 'selected' if inp.system=='geo' }}>Geográficas (lat, lon)</option></select></div>
+  </div>
+  <div class="row utm" {% if inp.system=='geo' %}style="display:none"{% endif %}>
+    <div><label>E (m)</label><input type="text" name="c{{ i }}_E" value="{{ inp.E if inp.E is not none else '' }}"></div>
+    <div><label>N (m)</label><input type="text" name="c{{ i }}_N" value="{{ inp.N if inp.N is not none else '' }}"></div>
+    <div><label>Fuso</label><input type="text" name="c{{ i }}_zone" value="{{ inp.zone or '' }}" placeholder="33"></div>
+    <div><label>Hemisfério</label><select name="c{{ i }}_hem">
+      <option value="S" {{ 'selected' if (inp.hemisphere or 'S')=='S' }}>Sul</option>
+      <option value="N" {{ 'selected' if inp.hemisphere=='N' }}>Norte</option></select></div>
+  </div>
+  <div class="row geo" {% if inp.system!='geo' %}style="display:none"{% endif %}>
+    <div><label>Latitude</label><input type="text" name="c{{ i }}_lat" value="{{ inp.lat or '' }}" placeholder="-8.436457 ou 8°26'11.2&quot;S"></div>
+    <div><label>Longitude</label><input type="text" name="c{{ i }}_lon" value="{{ inp.lon or '' }}" placeholder="16.668293 ou 16°40'05.9&quot;E"></div>
+  </div>
+  <div class="row">
+    <div><label>h elipsoidal (m)</label><input type="text" name="c{{ i }}_h" value="{{ inp.h if inp.h is not none else '' }}"></div>
+    <div><label>H ortométrica (m) — opcional</label><input type="text" name="c{{ i }}_H" value="{{ inp.H if inp.H is not none else '' }}"></div>
+    <div><label>σ horizontal (m)</label><input type="text" name="c{{ i }}_sh" value="{{ inp.sigma_h or '' }}" placeholder="vazio = fixo"></div>
+    <div><label>σ vertical (m)</label><input type="text" name="c{{ i }}_sv" value="{{ inp.sigma_v or '' }}" placeholder="vazio = fixo"></div>
+  </div>
+</div>
+{% endfor %}
+</div>
+<input type="hidden" name="n_ctrl" id="n_ctrl" value="{{ ctrls|length }}">
+<button type="button" class="btn sec" onclick="addCtrl()">+ outro marco de controle</button>
+
+<h2>3. Linhas de base</h2>
+<p class="note">Pares de receptores que rastrearam ao mesmo tempo. Por padrão entram as com pelo menos
+{{ p.settings.min_overlap_min }} min em comum. Linhas entre arquivos com o mesmo nome de marco são ignoradas.</p>
+<div class="tbl"><table>
+<tr><th>Usar</th><th>Dia</th><th>Marco A</th><th>Marco B</th><th class="n">Comprimento aprox. (km)</th><th class="n">Tempo comum (min)</th></tr>
+{% for b in p.baselines %}
+<tr class="{{ '' if b.overlap_min >= p.settings.min_overlap_min else 'off' }}">
+  <td><input type="checkbox" name="bl_{{ b.id }}" {{ 'checked' if b.include }}></td>
+  <td>{{ b.day|day }}</td>
+  <td class="nm" data-occ="{{ b.occ_a }}">{{ occ[b.occ_a].name }}</td>
+  <td class="nm" data-occ="{{ b.occ_b }}">{{ occ[b.occ_b].name }}</td>
+  <td class="n">{{ '%.3f'|format(b.approx_length_m/1000) if b.approx_length_m else '—' }}</td>
+  <td class="n">{{ b.overlap_min|round|int }}</td>
+</tr>
+{% endfor %}
+</table></div>
+
+<h2>4. Opções</h2>
+<div class="card"><div class="row">
+  <div><label>Intervalo de processamento (s)</label><input type="text" name="interval_s" value="{{ p.settings.interval_s }}">
+  <p class="note">10 s é um bom equilíbrio; 5 s usa todas as épocas (mais lento).</p></div>
+  <div><label>Fuso UTM de saída</label><input type="text" name="utm_zone" value="{{ p.settings.utm_zone or '' }}" placeholder="automático"></div>
+  <div><label>Hemisfério</label><select name="hemisphere"><option value="">automático</option>
+    <option value="S" {{ 'selected' if p.settings.hemisphere=='S' }}>Sul</option>
+    <option value="N" {{ 'selected' if p.settings.hemisphere=='N' }}>Norte</option></select></div>
+</div>
+{% if p.precise %}<p class="note">Órbitas precisas: {% for f in p.precise %}{{ f.split('/')[-1] }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+</div>
+
+<p style="margin-top:22px">
+  <button class="btn" type="submit" name="action" value="process">Processar</button>
+  <button class="btn sec" type="submit" name="action" value="save">Só salvar</button>
+</p>
+</form>
+
+<script>
+function sys(sel){const c=sel.closest('.ctrl');const g=sel.value==='geo';
+  c.querySelector('.utm').style.display=g?'none':'';c.querySelector('.geo').style.display=g?'':'none';}
+function addCtrl(){const box=document.getElementById('ctrls');const src=box.querySelector('.ctrl');
+  const n=box.querySelectorAll('.ctrl').length;const c=src.cloneNode(true);
+  c.dataset.i=n;c.querySelectorAll('[name]').forEach(e=>{e.name=e.name.replace(/^c\d+_/,'c'+n+'_');
+    if(e.tagName==='INPUT')e.value='';});
+  box.appendChild(c);document.getElementById('n_ctrl').value=n+1;}
+document.querySelectorAll('.occname').forEach(inp=>inp.addEventListener('input',()=>{
+  document.querySelectorAll('.nm[data-occ="'+inp.dataset.occ+'"]').forEach(td=>td.textContent=inp.value.toUpperCase());}));
+</script>
+{% endblock %}

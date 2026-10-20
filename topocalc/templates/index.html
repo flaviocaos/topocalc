@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Novo processamento{% endblock %}
+{% block body %}
+<h1>Novo processamento GNSS</h1>
+<p class="lead">Envie os arquivos brutos <b>.GNS</b> do topógrafo (todos os dias e todos os receptores).
+O TopoCalc converte para RINEX, identifica sessões e linhas de base, e depois pede que você confira os
+nomes dos marcos, as alturas de antena e as coordenadas do controle.</p>
+
+{% if not rtklib_ok %}
+<div class="notice">O RTKLIB (convbin / rnx2rtkp) não foi encontrado neste servidor. Use a imagem Docker do
+projeto ou defina <code>TOPOCALC_RTKLIB_DIR</code>.</div>
+{% endif %}
+
+<form class="card" method="post" action="{{ url_for('create_project') }}" enctype="multipart/form-data"
+      onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Enviando…'">
+  <label>Nome do levantamento</label>
+  <input type="text" name="title" placeholder="ex.: Marcos HCB — Angola, out/2026">
+  <label>Arquivos .GNS</label>
+  <input type="file" name="gns" multiple required accept=".gns,.GNS">
+  <p class="note">Pode selecionar vários de uma vez. Arquivos grandes podem levar alguns minutos para enviar.</p>
+  <label>Órbitas e relógios precisos (opcional)</label>
+  <input type="file" name="precise" multiple accept=".sp3,.SP3,.clk,.CLK,.sp3.gz,.clk.gz">
+  <p class="note">Arquivos SP3 e CLK (ex.: GFZ/IGS rápidos ou finais) do(s) dia(s) do rastreio. Melhoram linhas
+  acima de ~20 km. Sem eles, usam-se as efemérides transmitidas gravadas pelos receptores.</p>
+  <p style="margin-top:16px"><button class="btn" type="submit">Enviar e analisar</button></p>
+</form>
+
+{% if projects %}
+<h2>Projetos recentes</h2>
+<div class="tbl"><table>
+<tr><th>Levantamento</th><th>Criado</th><th>Arquivos</th><th>Situação</th><th></th></tr>
+{% for p in projects %}
+<tr>
+  <td>{{ p.title }}</td><td>{{ p.created|dt }}</td><td class="n">{{ p.files|length }}</td>
+  <td>{% if p.status=='done' %}<span class="pill ok">concluído</span>
+      {% elif p.status=='review' %}<span class="pill info">aguardando revisão</span>
+      {% elif p.status=='error' %}<span class="pill bad">erro</span>
+      {% else %}<span class="pill warn">processando</span>{% endif %}</td>
+  <td><a href="{{ url_for('project', pid=p.id) }}">abrir</a></td>
+</tr>
+{% endfor %}
+</table></div>
+<p class="note">Projetos são apagados automaticamente após {{ keep_days|int }} dias. No Render, a pasta é
+apagada também a cada novo deploy ou reinício — baixe o pacote de entregáveis.</p>
+{% endif %}
+{% endblock %}

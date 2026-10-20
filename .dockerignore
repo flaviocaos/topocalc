@@ -11,3 +11,7 @@ amostras_gns/
 .git/
 .vscode/
 *.jpg
+*.GNS
+projeto*/
+topocalc/bin/
+tests/data/
