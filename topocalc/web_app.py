@@ -186,6 +186,14 @@ def status(pid):
                    message=p.get("message", ""), log=p.get("log", [])[-12:])
 
 
+@app.route("/p/<pid>/revisao", methods=["GET"])
+@app.route("/p/<pid>/reajustar", methods=["GET"])
+def back_to_project(pid):
+    # GET nessas rotas acontece quando o Render "acorda" o serviço e recarrega a
+    # página: volta para o projeto em vez de mostrar "Method Not Allowed".
+    return redirect(url_for("project", pid=pid))
+
+
 @app.route("/p/<pid>/revisao", methods=["POST"])
 def review(pid):
     d = _pdir(pid)
@@ -286,6 +294,15 @@ def delete(pid):
     shutil.rmtree(d, ignore_errors=True)
     flash("Projeto excluído.")
     return redirect(url_for("index"))
+
+
+@app.errorhandler(404)
+def not_found(_e):
+    if request.path.startswith("/p/"):
+        flash("Projeto não encontrado. No plano gratuito do Render os arquivos são apagados quando o "
+              "serviço reinicia ou hiberna — envie os .GNS novamente.")
+        return redirect(url_for("index"))
+    return "Página não encontrada.", 404
 
 
 @app.errorhandler(413)
