@@ -48,6 +48,7 @@ PRODUCTS = [
     ("WUM0MGXRAP", ["05M", "15M"], ["30S", "05M"], "Wuhan rápido multi-GNSS"),
     ("SHA0MGXRAP", ["05M", "15M"], ["05M", "30S"], "SHAO rápido multi-GNSS"),
     ("COD0OPSRAP", ["05M"], ["30S", "05M"], "CODE rápido"),
+    ("COD0OPSFIN", ["05M"], ["30S", "05M"], "CODE final"),
     ("IGS0OPSFIN", ["15M"], ["30S", "05M"], "IGS final (combinado)"),
     ("IGS0OPSRAP", ["15M"], ["05M"], "IGS rápido (combinado)"),
 ]
@@ -68,9 +69,22 @@ def _dirs(d: date, product: str) -> list[str]:
         if mgex:
             out.append(f"{root}/mgex/{w}")
         out.append(f"{root}/{w}")
+    # mesmos arquivos por FTP anônimo (IGN/ENSG nem sempre respondem por HTTPS)
+    for root in ("ftp://igs.ign.fr/pub/igs/products", "ftp://igs.ensg.eu/pub/igs/products"):
+        if mgex:
+            out.append(f"{root}/mgex/{w}")
+        out.append(f"{root}/{w}")
+    # CODE (Universidade de Berna): servidor próprio, HTTP aberto, por ano
+    if product.startswith("COD"):
+        if mgex:
+            out.append(f"http://ftp.aiub.unibe.ch/CODE_MGEX/CODE/{d.year}")
+        else:
+            out.append(f"http://ftp.aiub.unibe.ch/CODE/{d.year}")
+            out.append("http://ftp.aiub.unibe.ch/CODE")
     if product.startswith("GFZ"):
         kind = "rapid" if product.endswith("RAP") else "final"
         out.append(f"https://isdc-data.gfz.de/gnss/products/{kind}/w{w}")
+        out.append(f"ftp://isdc-ftp.gfz.de/gnss/products/{kind}/w{w}")
     if os.environ.get("TOPOCALC_EARTHDATA_USER"):
         if mgex:
             out.append(f"https://cddis.nasa.gov/archive/gnss/products/mgex/{w}")
@@ -100,6 +114,7 @@ def _opener():
 
 
 OK, MISSING, DEAD = "ok", "missing", "dead"
+_LOG: list[str] = []      # últimas tentativas (para o diagnóstico)
 
 
 def _download(url: str, dest: Path) -> str:
@@ -116,14 +131,21 @@ def _download(url: str, dest: Path) -> str:
             shutil.copyfileobj(r, f)
     except urllib.error.HTTPError as e:
         tmp.unlink(missing_ok=True)
+        _LOG.append(f"{e.code} {url}")
         return MISSING if e.code in (401, 403, 404, 410) else DEAD
-    except (urllib.error.URLError, OSError, TimeoutError):
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
         tmp.unlink(missing_ok=True)
+        msg = str(getattr(e, "reason", e))
+        _LOG.append(f"erro {msg[:80]} {url}")
+        # FTP: "550 arquivo inexistente" significa servidor vivo
+        if url.startswith("ftp://") and ("550" in msg or "No such file" in msg):
+            return MISSING
         return DEAD
     if tmp.stat().st_size < 1000:
         tmp.unlink(missing_ok=True)
         return MISSING
     os.replace(tmp, dest)
+    _LOG.append(f"ok {url}")
     return OK
 
 
@@ -190,6 +212,7 @@ def _get(base: str, names: list[str], cdir: Path, valid, dead: set, res) -> Opti
         res.tried += 1
         gz = cdir / n
         st = _download(f"{base}/{n}", gz)
+        del _LOG[:-60]
         if st == DEAD:
             dead.add(host)
             return None

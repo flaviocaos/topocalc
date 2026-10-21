@@ -167,6 +167,7 @@ def _analyze(pdir: Path, prog: Progress) -> None:
             "antenna_height": h.antenna_height_m or 0.0,
             "antenna_height_header": h.antenna_height_m,
             "receiver": h.model_name or h.model_code, "serial": h.serial,
+            "model_code": h.model_code,
             "format": h.data_format, "interval_s": info.get("interval_s") or h.interval_s,
             "first": info["first"], "last": info["last"], "n_epochs": info["n_epochs"],
             "day": info["first"].date().isoformat() if info["first"] else
@@ -219,6 +220,11 @@ def _analyze(pdir: Path, prog: Progress) -> None:
     try:
         antenna.ngs_atx()            # baixa uma vez (cache); sem rede, segue sem ela
         p["antenna_options"] = antenna.antenna_options([Path(f) for f in p.get("antex_user", [])])
+        # sugestão de antena pelo código do modelo gravado no .GNS (ex.: HITV90, HITV200)
+        names = {a["name"] for a in p["antenna_options"]}
+        for o in occs:
+            code = (o.get("model_code") or "").strip().upper()
+            o["antenna_suggested"] = next((n for n in (f"{code} NONE", code) if n in names), "")
     except Exception as e:  # noqa: BLE001
         p["antenna_options"] = []
         prog(None, f"AVISO: calibrações de antena indisponíveis ({e}).")

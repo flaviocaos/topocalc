@@ -31,7 +31,7 @@ precisam ter <b>o mesmo nome</b> para a rede se ligar.</p>
   <td>{{ o.receiver }} <span class="note">{{ 'NovAtel' if o.format=='novatel' else 'Trimble' }}</span></td>
   <td><input type="text" class="md occname" data-occ="{{ o.id }}" name="name_{{ o.id }}" value="{{ o.name }}" required></td>
   <td><input type="text" class="sm" name="ant_{{ o.id }}" value="{{ '%.3f'|format(o.antenna_height) }}"></td>
-  <td><input type="text" class="md" list="antenas" name="atype_{{ o.id }}" value="{{ o.antenna_type or '' }}" placeholder="sem calibração"></td>
+  <td><input type="text" class="md" list="antenas" name="atype_{{ o.id }}" value="{{ o.antenna_type or '' }}" data-sug="{{ o.antenna_suggested or '' }}" placeholder="{{ ('sugestão: ' ~ o.antenna_suggested) if o.antenna_suggested else 'sem calibração' }}"></td>
   <td class="note">{% if o.approx_llh %}{{ o.approx_llh[0]|dms('lat') }}<br>{{ o.approx_llh[1]|dms('lon') }}{% else %}—{% endif %}</td>
   <td class="note">{{ o.header_warnings|join('; ') }}</td>
 </tr>
@@ -41,7 +41,9 @@ precisam ter <b>o mesmo nome</b> para a rede se ligar.</p>
 <p class="note">Altura da antena: vertical, do marco até o ponto de referência da antena (ARP).
 Antena: modelo para a calibração do centro de fase (lista das calibrações IGS/NGS{% if p.antex_user %} e do arquivo enviado{% endif %};
 {{ (p.antenna_options or [])|length }} modelos). Deixe vazio para não aplicar calibração. Para comparar com outro
-programa (ex.: Leica Infinity), use o mesmo modelo de antena nos dois.</p>
+programa (ex.: Leica Infinity), use o mesmo modelo de antena nos dois.
+{% if p.occupations|selectattr('antenna_suggested')|list %}<button type="button" class="btn sec" style="margin-top:6px;padding:5px 12px"
+onclick="document.querySelectorAll('input[data-sug]').forEach(i=>{if(i.dataset.sug)i.value=i.dataset.sug})">Usar as antenas sugeridas pelo modelo do receptor</button>{% endif %}</p>
 
 <h2>2. Controle (coordenadas conhecidas)</h2>
 <p class="note">Informe pelo menos um marco com coordenadas conhecidas em WGS 84 (ou SIRGAS/ITRF compatível). O nome
