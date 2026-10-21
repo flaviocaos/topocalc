@@ -203,6 +203,7 @@ def project(pid):
     if p["status"] == "error" or not p.get("results"):
         return render_template("error.html", p=p, version=__version__)
     return render_template("results.html", p=p, version=__version__,
+                           improvable=P.improvable_days(p),
                            outputs=[Path(f).name for f in p.get("outputs", [])])
 
 
@@ -313,6 +314,15 @@ def readjust(pid):
             b["excluded"] = b["id"] in excl
     P.save(d, p)
     _start(pid, P.readjust)
+    return redirect(url_for("project", pid=pid))
+
+
+@app.route("/p/<pid>/reprocessar", methods=["POST"])
+def reprocess(pid):
+    """Procura órbitas melhores (ex.: finais, que saem ~2 semanas depois) e reprocessa."""
+    _load(pid)
+    P.prepare_reprocess(_pdir(pid))
+    _start(pid, P.process)
     return redirect(url_for("project", pid=pid))
 
 

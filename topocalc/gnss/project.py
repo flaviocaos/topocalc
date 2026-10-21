@@ -571,6 +571,35 @@ def _adjust_and_report(pdir: Path, prog: Progress) -> None:
     save(pdir, p)
 
 
+def improvable_days(p: dict) -> list[str]:
+    """Dias processados sem órbita FINAL (transmitida, ultra-rápida ou rápida)."""
+    if p.get("precise") or p["settings"].get("orbits", "auto") != "auto":
+        return []
+    out = []
+    for d in sorted({o["day"] for o in p["occupations"] if o.get("include", True)}):
+        info = (p.get("precise_auto") or {}).get(d) or {}
+        if not info.get("ok") or not str(info.get("product", "")).endswith("FIN"):
+            out.append(d)
+    return out
+
+
+def prepare_reprocess(pdir: Path) -> list[str]:
+    """Esquece as órbitas não finais para que process() procure de novo."""
+    p = load(pdir)
+    days = improvable_days(p)
+    auto = p.get("precise_auto") or {}
+    for d in list(auto):
+        if d in days or not auto[d].get("ok"):
+            auto.pop(d, None)
+    p["precise_auto"] = auto
+    for b in p["baselines"]:
+        b["result"] = None
+        b["excluded"] = False
+    p["results"] = None
+    save(pdir, p)
+    return days
+
+
 def _orbit_summary(p: dict) -> dict:
     """Órbitas usadas por dia (para relatório/tela)."""
     used = {}

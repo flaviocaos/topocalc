@@ -42,6 +42,13 @@
 Precisões em metros (1σ).
 {% if r.orbits %}<br>Órbitas: {% for d, o in r.orbits|dictsort %}{{ d|day }} — {{ o }}{{ '; ' if not loop.last }}{% endfor %}.{% endif %}
 {% if r.antennas %}<br>Calibração de antena: {{ r.antennas|join(', ') }}.{% else %}<br>Sem calibração de antena.{% endif %}</p>
+{% if improvable %}
+<div class="notice">Órbitas ainda não finais em {% for d in improvable %}{{ d|day }}{{ ', ' if not loop.last }}{% endfor %}
+(transmitidas, ultra-rápidas ou rápidas). As órbitas finais do IGS saem cerca de 2 semanas depois do rastreio.
+<form method="post" action="{{ url_for('reprocess', pid=p.id) }}" style="margin-top:8px">
+<button class="btn sec" type="submit">Buscar órbitas melhores e reprocessar</button>
+<span class="note">— mantém nomes, alturas, antenas e controle; refaz linhas de base e ajustamento.</span></form></div>
+{% endif %}
 {% for c in p.controls if c.ppp %}<div class="notice">Controle {{ c.name }} calculado por PPP: {{ c.notes|join(' ') }}</div>{% endfor %}
 
 {% if r.extra_crs %}

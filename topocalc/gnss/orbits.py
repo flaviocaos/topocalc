@@ -11,9 +11,10 @@ Ordem de preferência (o primeiro que existir é usado):
 Os produtos multi-GNSS (MGEX) são preferidos porque o processamento usa
 GPS + Galileo; um produto só GPS deixa os satélites Galileo de fora.
 
-Servidores (todos de acesso aberto, HTTPS): IGN e ENSG (França), BKG e GFZ
-(Alemanha). O CDDIS (NASA) também é tentado quando há credenciais
-Earthdata em TOPOCALC_EARTHDATA_USER / TOPOCALC_EARTHDATA_PASSWORD.
+Servidores, nesta ordem: CDDIS/NASA (o arquivo oficial do IGS; usado quando
+há credenciais Earthdata em TOPOCALC_EARTHDATA_USER / _PASSWORD), espelhos
+abertos de Wuhan, IGN/ENSG e BKG, e os servidores da ESA, CODE e GFZ. Um
+servidor que não responde é pulado no resto da busca.
 
 Os arquivos ficam em cache (TOPOCALC_CACHE_DIR, padrão <tmp>/topocalc_cache)
 para não baixar de novo o mesmo dia.
@@ -44,6 +45,7 @@ PRODUCTS = [
     ("GFZ0MGXFIN", ["05M", "15M"], ["30S", "05M"], "GFZ final multi-GNSS"),
     ("WUM0MGXFIN", ["05M", "15M"], ["30S", "05M"], "Wuhan final multi-GNSS"),
     ("GRG0MGXFIN", ["05M", "15M"], ["30S", "05M"], "CNES final multi-GNSS"),
+    ("ESA0MGNFIN", ["05M"], ["30S", "05M"], "ESA final multi-GNSS"),
     ("GFZ0MGXRAP", ["05M", "15M"], ["30S", "05M"], "GFZ rápido multi-GNSS"),
     ("WUM0MGXRAP", ["05M", "15M"], ["30S", "05M"], "Wuhan rápido multi-GNSS"),
     ("SHA0MGXRAP", ["05M", "15M"], ["05M", "30S"], "SHAO rápido multi-GNSS"),
@@ -62,22 +64,29 @@ def gps_week(d: date) -> int:
 
 
 def _dirs(d: date, product: str) -> list[str]:
-    """URLs de diretório candidatos para o produto no dia d."""
+    """URLs de diretório candidatos para o produto no dia d, na ordem de tentativa."""
     w = gps_week(d)
-    mgex = "MGX" in product
+    mgex = "MGX" in product or "MGN" in product
     out = []
-    # IGN e BKG: produtos IGS por semana GPS; MGEX também em /mgex/
-    for root in ("https://igs.ign.fr/pub/igs/products", "https://igs.ensg.eu/pub/igs/products",
-                 "https://igs.bkg.bund.de/root_ftp/IGS/products"):
+
+    def both(root):
         if mgex:
             out.append(f"{root}/mgex/{w}")
         out.append(f"{root}/{w}")
-    # mesmos arquivos por FTP anônimo (IGN/ENSG nem sempre respondem por HTTPS)
-    for root in ("ftp://igs.ign.fr/pub/igs/products", "ftp://igs.ensg.eu/pub/igs/products"):
-        if mgex:
-            out.append(f"{root}/mgex/{w}")
-        out.append(f"{root}/{w}")
-    # CODE (Universidade de Berna): servidor próprio, HTTP aberto, por ano
+
+    # 1) NASA CDDIS — arquivo oficial do IGS, o mais completo (exige conta Earthdata)
+    if os.environ.get("TOPOCALC_EARTHDATA_USER"):
+        both("https://cddis.nasa.gov/archive/gnss/products")
+    # 2) espelhos abertos do IGS: Wuhan (China), IGN/ENSG (França), BKG (Alemanha)
+    both("http://igs.gnsswhu.cn/pub/gps/products")
+    both("https://igs.ign.fr/pub/igs/products")
+    both("https://igs.ensg.eu/pub/igs/products")
+    both("https://igs.bkg.bund.de/root_ftp/IGS/products")
+    both("ftp://igs.gnsswhu.cn/pub/gps/products")
+    both("ftp://igs.ign.fr/pub/igs/products")
+    # 3) servidores dos próprios centros de análise
+    if product.startswith("ESA"):
+        out.append(f"http://navigation-office.esa.int/products/gnss-products/{w}")
     if product.startswith("COD"):
         if mgex:
             out.append(f"http://ftp.aiub.unibe.ch/CODE_MGEX/CODE/{d.year}")
@@ -88,10 +97,6 @@ def _dirs(d: date, product: str) -> list[str]:
         kind = "rapid" if product.endswith("RAP") else "final"
         out.append(f"https://isdc-data.gfz.de/gnss/products/{kind}/w{w}")
         out.append(f"ftp://isdc-ftp.gfz.de/gnss/products/{kind}/w{w}")
-    if os.environ.get("TOPOCALC_EARTHDATA_USER"):
-        if mgex:
-            out.append(f"https://cddis.nasa.gov/archive/gnss/products/mgex/{w}")
-        out.append(f"https://cddis.nasa.gov/archive/gnss/products/{w}")
     return out
 
 
