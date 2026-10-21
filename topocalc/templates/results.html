@@ -22,7 +22,7 @@
 <p>{% for f in outputs %}{% if not f.startswith('pacote_') %}<a href="{{ url_for('download', pid=p.id, fname=f) }}">{{ f }}</a>{{ ' · ' if not loop.last }}{% endif %}{% endfor %}</p>
 </div>
 
-<h2>Coordenadas finais — UTM {{ r.points[0].zone }}{{ r.points[0].hemisphere }}, WGS 84</h2>
+<h2>Coordenadas finais — {{ r.frame or 'WGS 84' }}, UTM {{ r.points[0].zone }}{{ r.points[0].hemisphere }}</h2>
 <div class="tbl"><table>
 <tr><th>Ponto</th><th class="n">E (m)</th><th class="n">N (m)</th><th class="n">h (m)</th><th class="n">N geoidal</th>
 <th class="n">H (m)</th><th class="n">σE</th><th class="n">σN</th><th class="n">σh</th><th>Vetores</th><th>Tipo</th></tr>
@@ -39,7 +39,23 @@
 {% endfor %}
 </table></div>
 <p class="note">Geoide: {{ r.geoid.model }}{% if r.geoid.controls %} (deslocamento {{ '%+.3f'|format(r.geoid.offset) }} m){% endif %}.
-Precisões em metros (1σ).</p>
+Precisões em metros (1σ).
+{% if r.orbits %}<br>Órbitas: {% for d, o in r.orbits|dictsort %}{{ d|day }} — {{ o }}{{ '; ' if not loop.last }}{% endfor %}.{% endif %}
+{% if r.antennas %}<br>Calibração de antena: {{ r.antennas|join(', ') }}.{% else %}<br>Sem calibração de antena.{% endif %}</p>
+{% for c in p.controls if c.ppp %}<div class="notice">Controle {{ c.name }} calculado por PPP: {{ c.notes|join(' ') }}</div>{% endfor %}
+
+{% if r.extra_crs %}
+{% set short = {'camacupa2015': 'Camacupa 2015 UTM', 'ltp': 'Plano local'} %}
+<h2>Outros sistemas</h2>
+<div class="tbl"><table>
+<tr><th>Ponto</th>{% for k, label in r.extra_crs|dictsort %}<th class="n">{{ short.get(k, k) }} E</th><th class="n">{{ short.get(k, k) }} N</th>{% if k=='ltp' %}<th class="n">H (m)</th>{% endif %}{% endfor %}</tr>
+{% for pt in r.points %}<tr><td><b>{{ pt.name }}</b></td>
+{% for k, label in r.extra_crs|dictsort %}{% set v = (pt.extra or {}).get(k) %}
+<td class="n">{{ '%.3f'|format(v[0]) if v else '—' }}</td><td class="n">{{ '%.3f'|format(v[1]) if v else '—' }}</td>{% if k=='ltp' %}<td class="n">{{ '%.3f'|format(pt.H) }}</td>{% endif %}
+{% endfor %}</tr>{% endfor %}
+</table></div>
+<p class="note">{% for k, label in r.extra_crs|dictsort %}{{ short.get(k, k) }}: {{ label }}.{% if k=='camacupa2015' %} Transformação oficial EPSG, precisão ±3 m.{% endif %}<br>{% endfor %}</p>
+{% endif %}
 
 <h2>Linhas de base e resíduos</h2>
 <form method="post" action="{{ url_for('readjust', pid=p.id) }}">

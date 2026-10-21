@@ -65,7 +65,8 @@ def export_rinex_zip(p: dict, path: Path) -> Path:
                 lat, lon, _ = ecef_to_llh(*mark)
                 arp = mark + enu_matrix(lat, lon)[2] * float(o["antenna_height"])
             patch_header(Path(o["obs"]), approx_xyz=arp, marker=o["name"],
-                         antenna_height=float(o["antenna_height"]))
+                         antenna_height=float(o["antenna_height"]),
+                         antenna_type=o.get("antenna_type") or None)
             z.write(o["obs"], arcname=f"{day}/{o['name']}_{o['id']}.obs")
         for day, nav in (p.get("navs") or {}).items():
             z.write(nav, arcname=f"{day}/navegacao_{day}.nav")

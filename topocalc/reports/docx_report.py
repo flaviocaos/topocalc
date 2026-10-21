@@ -199,8 +199,9 @@ def build_docx(p: dict, path: Path, workdir: Path) -> Path:
     # 2. Coordenadas finais
     _heading(doc, "2. Coordenadas finais")
     z = f"{pts[0]['zone']}{pts[0]['hemisphere']}"
-    _para(doc, f"Sistema: WGS 84 (G-realização das efemérides transmitidas), projeção UTM fuso {z}. "
-               f"Altitude ortométrica H = h − N, com N do modelo {res['geoid']['model']}.", size=9, italic=True)
+    _para(doc, f"Referencial: {res.get('frame') or 'WGS 84'} (o mesmo das coordenadas do controle), projeção "
+               f"UTM fuso {z}. Altitude ortométrica H = h − N, com N do modelo {res['geoid']['model']}.",
+          size=9, italic=True)
     _table(doc, ["Ponto", "E (m)", "N (m)", "h (m)", "N geoidal (m)", "H (m)", "σE (m)", "σN (m)",
                  "σh (m)", "Tipo"],
            [[pt["name"], f"{pt['E']:.3f}", f"{pt['N']:.3f}", f"{pt['h']:.3f}", f"{pt['N_geoid']:.3f}",
@@ -212,6 +213,29 @@ def build_docx(p: dict, path: Path, workdir: Path) -> Path:
            [[pt["name"], dms(pt["lat"], "lat"), dms(pt["lon"], "lon"), f"{pt['h']:.3f}",
              f"{pt['convergence']:.6f}", f"{pt['scale']:.8f}"] for pt in pts],
            [1, 2, 2, 1.1, 1.3, 1.3])
+
+    extra = res.get("extra_crs") or {}
+    if extra:
+        _heading(doc, "2.2 Outros sistemas de coordenadas", 2)
+        for key, label in sorted(extra.items()):
+            if label.startswith("indisponível"):
+                _para(doc, f"{key}: {label}", size=9, italic=True)
+                continue
+            _para(doc, label, size=9, bold=True)
+            if key == "ltp":
+                _table(doc, ["Ponto", "E local (m)", "N local (m)", "H (m)"],
+                       [[pt["name"], f"{pt['extra']['ltp'][0]:.3f}", f"{pt['extra']['ltp'][1]:.3f}",
+                         f"{pt['H']:.3f}"] for pt in pts if "ltp" in pt.get("extra", {})], [1, 1.5, 1.5, 1.2])
+                _para(doc, "Plano tangente ao elipsoide na origem: distâncias e áreas no plano correspondem às do "
+                           "terreno perto da altitude da origem. Não é a formulação completa da NBR 14166.",
+                      size=8.5, italic=True)
+            else:
+                _table(doc, ["Ponto", "E (m)", "N (m)"],
+                       [[pt["name"], f"{pt['extra'][key][0]:.3f}", f"{pt['extra'][key][1]:.3f}"]
+                        for pt in pts if key in pt.get("extra", {})], [1, 1.5, 1.5])
+                _para(doc, "Transformação oficial EPSG \"Camacupa 2015 to WGS 84 (11)\", precisão declarada de "
+                           "±3 m. Serve para compatibilidade com a cartografia angolana; não substitui "
+                           "parâmetros locais determinados em marcos da rede oficial.", size=8.5, italic=True)
 
     croqui = _croqui(p, workdir / "croqui.png")
     doc.add_picture(str(croqui), width=Cm(15.5))
@@ -225,6 +249,9 @@ def build_docx(p: dict, path: Path, workdir: Path) -> Path:
              "fixo" if not (c.get("sigma_h") or c.get("sigma_v"))
              else f"σH {c['sigma_h']:.3f} m / σV {c['sigma_v']:.3f} m"] for c in p["controls"]],
            [1, 2, 2, 1.2, 1.2, 1.6])
+    for c in p["controls"]:
+        if c.get("ppp"):
+            _para(doc, f"{c['name']}: " + " ".join(c.get("notes", [])), size=9)
     g = res["geoid"]
     if g["controls"]:
         txt = "; ".join(f"{c['name']}: N observado {c['N_obs']:.3f} m, EGM96 {c['N_egm96']:.3f} m"
@@ -308,7 +335,8 @@ def build_docx(p: dict, path: Path, workdir: Path) -> Path:
         "(GPSEPHEM) por decodificador próprio. Receptores com placa Trimble: observações do registro RT27 "
         "por decodificador próprio (validado contra o Leica Infinity) e efemérides GPS pelo RTKLIB (RT17).",
         "Processamento: RTKLIB demo5 (rnx2rtkp), modo estático, GPS + Galileo, máscara de elevação 15°, "
-        "efemérides " + ("precisas (SP3/CLK fornecidas)" if p.get("precise") else "transmitidas") + ". "
+        "órbitas: " + ("; ".join(f"{fmt_day(d)} {o}" for d, o in sorted((res.get("orbits") or {}).items()))
+                       or "transmitidas") + ". "
         f"Linhas com menos de {SHORT_KM:.0f} km: L1+L2, ionosfera do modelo transmitido, ambiguidades "
         "resolvidas para frente e para trás. Linhas longas: ionosfera e troposfera estimadas; solução "
         "flutuante e tentativa de fixação nos dois sentidos.",
@@ -326,13 +354,19 @@ def build_docx(p: dict, path: Path, workdir: Path) -> Path:
         _bullet(doc, t)
 
     _heading(doc, "8. Limitações")
-    lim = [
-        "Calibração de antena (centro de fase) não aplicada: os arquivos não identificam o modelo da antena. "
-        "Com antenas de modelos diferentes nas duas pontas, isso pode causar diferenças de alguns centímetros "
-        "na altura.",
-        "Com efemérides transmitidas, o erro de órbita contribui com cerca de 0,1–0,5 ppm do comprimento da "
-        "linha. Para linhas acima de ~20 km recomenda-se reprocessar com órbitas precisas (SP3/CLK).",
-    ]
+    lim = []
+    if res.get("antennas"):
+        _bullet(doc, "Calibração de antena (centro de fase) aplicada: " + ", ".join(res["antennas"]) + ".")
+        if any(not o.get("antenna_type") for o in p["occupations"] if o.get("include", True)):
+            lim.append("Alguns arquivos ficaram sem modelo de antena: neles a calibração não foi aplicada.")
+    else:
+        lim.append("Calibração de antena (centro de fase) não aplicada: nenhum modelo de antena foi escolhido. "
+                   "Com antenas de modelos diferentes nas duas pontas, isso pode causar diferenças de alguns "
+                   "centímetros na altura.")
+    if any("transmitidas" in o for o in (res.get("orbits") or {}).values()):
+        lim.append("Nos dias processados com efemérides transmitidas, o erro de órbita contribui com cerca de "
+                   "0,1–0,5 ppm do comprimento da linha. Para linhas acima de ~20 km, reprocesse quando as "
+                   "órbitas precisas estiverem disponíveis.")
     if nflo:
         lim.append(f"{nflo} vetor(es) com solução flutuante: precisão de centímetros, não de milímetros. "
                    "Pontos determinados só por vetores flutuantes devem ser tratados com essa precisão.")

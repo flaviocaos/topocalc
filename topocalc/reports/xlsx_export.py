@@ -55,6 +55,24 @@ def export_xlsx(p: dict, path: Path) -> Path:
            [12, 15, 15, 15, 13, 15, 9, 9, 9, 16, 12, 14],
            [None, "0.000", "0.000", "0.000", "0.000", "0.000", "0.000", "0.000", "0.000"])
 
+    extra = res.get("extra_crs") or {}
+    if extra:
+        hdr, keys = ["Ponto"], []
+        for k, label in sorted(extra.items()):
+            if label.startswith("indisponível"):
+                continue
+            keys.append(k)
+            hdr += [f"{label} — E (m)", "N (m)"] + (["H (m)"] if k == "ltp" else [])
+        rows = []
+        for pt in pts:
+            row = [pt["name"]]
+            for k in keys:
+                v = (pt.get("extra") or {}).get(k)
+                row += [v[0] if v else None, v[1] if v else None] + ([pt["H"]] if k == "ltp" else [])
+            rows.append(row)
+        _sheet(wb, "Outros sistemas", hdr, rows, [12] + [24] * (len(hdr) - 1),
+               [None] + ["0.000"] * (len(hdr) - 1))
+
     _sheet(wb, "Geodésicas",
            ["Ponto", "Latitude (°)", "Longitude (°)", "Latitude (GMS)", "Longitude (GMS)", "h (m)",
             "Convergência meridiana (°)", "Fator de escala UTM"],
@@ -90,6 +108,9 @@ def export_xlsx(p: dict, path: Path) -> Path:
         ["Valor crítico (F 95 %)", a["f_crit"]],
         ["Teste global", "Aprovado" if a["global_test_passed"] else "Reprovado"],
         ["Pontos sem ligação com o controle", ", ".join(a["unconnected"]) or "nenhum"],
+        ["Referencial", res.get("frame") or "WGS 84"],
+        ["Órbitas", "; ".join(f"{d}: {o}" for d, o in sorted((res.get("orbits") or {}).items()))],
+        ["Calibração de antena", ", ".join(res.get("antennas") or []) or "não aplicada"],
         ["Geoide", res["geoid"]["model"]],
         ["Ajuste do geoide ao controle (m)", res["geoid"]["offset"]],
     ], [38, 30])

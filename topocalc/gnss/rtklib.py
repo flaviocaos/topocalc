@@ -109,3 +109,36 @@ def run_rnx2rtkp(conf: Path, rover: Path, base: Path, navs: Iterable[Path], out:
 
 __all__ = ["find_binary", "available", "run_convbin", "spp", "write_conf", "run_rnx2rtkp",
            "RtklibNotFound", "ecef_to_llh", "llh_to_ecef"]
+
+
+def ppp_static(obs: Path, navs: Iterable[Path], precise: Iterable[Path], atx: Path, out: Path,
+               antenna_height: float, antenna_type: str = "", interval: int = 30) -> Optional[dict]:
+    """PPP estático (RTKLIB): posição do MARCO a partir de órbitas e relógios
+    precisos. Retorna xyz, llh, n épocas e desvio-padrão formal (m) — ou None."""
+    conf = out.with_suffix(".conf")
+    cfg = {
+        "pos1-posmode": "ppp-static", "pos1-frequency": "l1+l2", "pos1-soltype": "forward",
+        "pos1-elmask": "10", "pos1-ionoopt": "dual-freq", "pos1-tropopt": "est-ztdgrad",
+        "pos1-sateph": "precise", "pos1-navsys": "9", "pos1-tidecorr": "on",
+        "pos1-posopt1": "on", "pos1-posopt2": "on", "pos1-posopt3": "on",
+        "pos1-posopt4": "on", "pos1-posopt5": "on", "pos2-armode": "off",
+        "out-solformat": "xyz", "out-outhead": "on", "out-solstatic": "single",
+        "stats-eratio1": "300", "stats-eratio2": "300",
+        "file-satantfile": str(atx), "file-rcvantfile": str(atx),
+        "ant1-antdelu": "%.4f" % antenna_height,
+    }
+    if antenna_type:
+        cfg["ant1-anttype"] = antenna_type
+    write_conf(conf, cfg)
+    args = [find_binary("rnx2rtkp"), "-k", str(conf), "-ti", str(interval), "-o", str(out),
+            str(obs)] + [str(n) for n in navs] + [str(p) for p in precise]
+    subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3600)
+    rows = _read_pos(out)
+    if not rows:
+        return None
+    last = rows[-1]
+    xyz = np.array([float(v) for v in last[2:5]])
+    sd = [float(v) for v in last[7:10]] if len(last) >= 10 else [0, 0, 0]
+    lat, lon, h = ecef_to_llh(*xyz)
+    return {"xyz": xyz.tolist(), "lat": lat, "lon": lon, "h": h, "q": int(last[5]),
+            "sd_xyz": sd}

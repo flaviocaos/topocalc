@@ -31,7 +31,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from . import rtklib
+from . import antenna, crs, orbits, rtklib
 from .adjust import Control, adjust_network
 from .baseline import process_baseline
 from .geodesy import ecef_to_llh, egm96, enu_matrix, from_utm, llh_to_ecef, to_utm, utm_zone
@@ -45,6 +45,10 @@ DEFAULT_SETTINGS = {
     "utm_zone": None,          # automático
     "hemisphere": None,        # automático
     "workers": None,           # automático
+    "orbits": "auto",          # auto (precisas quando houver) | broadcast
+    "frame": "WGS84",          # referencial das coordenadas do controle (rótulo de saída)
+    "extra_crs": [],           # camacupa2015 | camacupa1948 | ltp
+    "ltp_origin": None,        # ponto de origem do plano topográfico local
 }
 
 _locks: dict[str, threading.Lock] = {}
@@ -106,7 +110,7 @@ class Progress:
 # ------------------------------------------------------------ etapa 1
 
 def create(pdir: Path, gns_files: list[Path], precise_files: Optional[list[Path]] = None,
-           title: str = "") -> dict:
+           title: str = "", antex_files: Optional[list[Path]] = None) -> dict:
     pdir.mkdir(parents=True, exist_ok=True)
     p = {
         "id": pdir.name, "title": title or "Levantamento GNSS", "created": datetime.now(),
@@ -114,6 +118,7 @@ def create(pdir: Path, gns_files: list[Path], precise_files: Optional[list[Path]
         "settings": dict(DEFAULT_SETTINGS),
         "files": [{"path": str(f), "filename": f.name} for f in gns_files],
         "precise": [str(f) for f in (precise_files or [])],
+        "antex_user": [str(f) for f in (antex_files or [])],
         "occupations": [], "controls": [], "baselines": [], "suggestions": [],
         "results": None,
     }
@@ -196,6 +201,27 @@ def _analyze(pdir: Path, prog: Progress) -> None:
         prog(70 + 25 * (k + 1) / len(occs), None)
 
     p = load(pdir)
+    # arquivos de órbita enviados pelo usuário (podem vir compactados)
+    up = []
+    for f in p.get("precise", []):
+        try:
+            up.append(str(orbits.decompress(Path(f))))
+        except Exception:  # noqa: BLE001
+            prog(None, f"AVISO: não consegui ler {Path(f).name}.")
+    p["precise"] = up
+    if not up and p["settings"].get("orbits", "auto") == "auto":
+        prog(96, "Procurando órbitas e relógios precisos dos dias do rastreio")
+        p["precise_auto"] = orbits.fetch_for_project([(o["first"], o["last"]) for o in occs])
+        for d, info in p["precise_auto"].items():
+            prog(None, f"Órbitas {d}: " + (f"{info['description']} ({info['source']})" if info["ok"]
+                                            else "não disponíveis — efemérides transmitidas"))
+    prog(98, "Carregando calibrações de antena")
+    try:
+        antenna.ngs_atx()            # baixa uma vez (cache); sem rede, segue sem ela
+        p["antenna_options"] = antenna.antenna_options([Path(f) for f in p.get("antex_user", [])])
+    except Exception as e:  # noqa: BLE001
+        p["antenna_options"] = []
+        prog(None, f"AVISO: calibrações de antena indisponíveis ({e}).")
     p["occupations"] = occs
     p["navs"] = navs
     p["suggestions"] = _suggest(occs)
@@ -260,6 +286,10 @@ def parse_control(c: dict) -> dict:
     'lat','lon', 'h' (elipsoidal) e/ou 'H' (ortométrica), 'sigma_h','sigma_v'}.
     """
     name = str(c["name"]).strip().upper()
+    if c.get("system") == "ppp":
+        return {"name": name, "ppp": True, "lat": None, "lon": None, "h": None, "H": None,
+                "xyz": None, "sigma_h": 0.0, "sigma_v": 0.0, "notes": [], "input": c,
+                "H_input": float(c["H"]) if c.get("H") not in (None, "") else None}
     if c.get("system", "utm") == "utm":
         zone = int(c["zone"])
         south = str(c.get("hemisphere", "S")).upper().startswith("S")
@@ -321,18 +351,86 @@ def _process(pdir: Path, prog: Progress) -> None:
     if not bls:
         raise ValueError("Nenhuma linha de base selecionada.")
 
+    work = pdir / "work"
+    work.mkdir(exist_ok=True)
+    interval = int(p["settings"].get("interval_s") or 10)
+
+    # órbitas precisas: arquivos do usuário têm prioridade; senão, busca automática
+    user_precise = [Path(x) for x in p.get("precise", [])]
+    auto = p.get("precise_auto") or {}
+    if not user_precise and p["settings"].get("orbits", "auto") == "auto":
+        missing_days = orbits.days_for_sessions([(_dt(o["first"]), _dt(o["last"])) for o in occ.values()])
+        if any(not (auto.get(d.isoformat()) or {}).get("ok") for d in missing_days):
+            prog(1, "Procurando órbitas precisas")
+            auto.update({k: v for k, v in orbits.fetch_for_project(
+                [(_dt(o["first"]), _dt(o["last"])) for o in occ.values()]).items()
+                if v["ok"] or k not in auto})
+            p["precise_auto"] = auto
+            save(pdir, p)
+
+    def precise_for(t0, t1):
+        if user_precise:
+            return user_precise, "precisas (arquivos enviados)"
+        if p["settings"].get("orbits", "auto") != "auto":
+            return None, "transmitidas"
+        files = orbits.files_for(auto, t0, t1)
+        if not files:
+            return None, "transmitidas"
+        prods = sorted({auto[d.isoformat()]["product"] for d in orbits.days_for_sessions([(t0, t1)])})
+        return [Path(f) for f in files], "precisas " + "/".join(prods)
+
+    # calibração de antenas (o igs20 embutido também traz os satélites, usado com órbitas precisas)
+    antenna.builtin_atx()
+    use_ant = any(o.get("antenna_type") for o in occ.values())
+    ppp_ctrls = [c for c in controls.values() if c.get("ppp")]
+    atx = None
+    if use_ant or ppp_ctrls:
+        atx = antenna.merged_atx([Path(f) for f in p.get("antex_user", [])], work / "antenas.atx")
+
+    # controle por PPP
+    for c in ppp_ctrls:
+        sols = []
+        for o in [o for o in occ.values() if o["name"] == c["name"]]:
+            t0, t1 = _dt(o["first"]), _dt(o["last"])
+            files, label = precise_for(t0, t1)
+            if not files:
+                raise ValueError(f"PPP de {c['name']}: não há órbitas e relógios precisos para "
+                                 f"{t0:%d/%m/%Y}. Envie os arquivos SP3/CLK ou informe as coordenadas.")
+            prog(1, f"PPP de {c['name']} ({o['file']}, {(t1 - t0).total_seconds() / 3600:.1f} h)")
+            r = rtklib.ppp_static(Path(o["proc_obs"]), [Path(p["navs"][o["day"]])], files, atx,
+                                  work / f"ppp_{o['id']}.pos", float(o["antenna_height"]),
+                                  o.get("antenna_type") or "", interval=30)
+            if r:
+                r["hours"] = (t1 - t0).total_seconds() / 3600
+                r["file"] = o["file"]
+                r["orbits"] = label
+                sols.append(r)
+        if not sols:
+            raise ValueError(f"PPP de {c['name']} não convergiu.")
+        w = np.array([s_["hours"] for s_ in sols])
+        xyz = (np.array([s_["xyz"] for s_ in sols]) * w[:, None]).sum(0) / w.sum()
+        lat, lon, h = ecef_to_llh(*xyz)
+        hours = float(w.sum())
+        # precisão realista de PPP flutuante (o sigma formal do RTKLIB é otimista)
+        sh = 0.02 if hours >= 6 else 0.03 if hours >= 3 else 0.06
+        sv = 2 * sh
+        c.update({"xyz": xyz.tolist(), "lat": lat, "lon": lon, "h": h, "sigma_h": sh, "sigma_v": sv,
+                  "H": c.get("H_input"), "ppp_solutions": sols,
+                  "notes": [f"Coordenada por PPP estático ({hours:.1f} h, {sols[0]['orbits']}); "
+                            f"precisão adotada σH {sh * 100:.0f} cm / σV {sv * 100:.0f} cm"]})
+        prog(None, f"PPP de {c['name']}: h = {h:.3f} m ({hours:.1f} h de dados)")
+    if ppp_ctrls:
+        p["controls"] = list(controls.values())
+        save(pdir, p)
+
     known: dict[str, np.ndarray] = {n: np.array(c["xyz"]) for n, c in controls.items()}
     done: dict[str, dict] = {}
     pending = list(bls)
     total = len(bls)
     workers = (p["settings"].get("workers") or int(os.environ.get("TOPOCALC_WORKERS", "0") or 0)
                or max(1, min(2, os.cpu_count() or 1)))
-    prog(1, f"Processando {total} linha(s) de base a partir de {', '.join(sorted(known))} "
+    prog(2, f"Processando {total} linha(s) de base a partir de {', '.join(sorted(known))} "
             f"({workers} em paralelo)")
-    precise = [Path(x) for x in p.get("precise", [])] or None
-    interval = int(p["settings"].get("interval_s") or 10)
-    work = pdir / "work"
-    work.mkdir(exist_ok=True)
 
     def job(b):
         a, c = occ[b["occ_a"]], occ[b["occ_b"]]
@@ -342,8 +440,12 @@ def _process(pdir: Path, prog: Progress) -> None:
             base, rover = c, a
         bdict = _station(base)
         rdict = _station(rover)
+        t0 = max(bdict["first"], rdict["first"])
+        t1 = min(bdict["last"], rdict["last"])
+        files, label = precise_for(t0, t1)
         r = process_baseline(b["id"], b["day"], bdict, rdict, [Path(p["navs"][b["day"]])],
-                             work, known[base["name"]], interval=interval, precise=precise)
+                             work, known[base["name"]], interval=interval, precise=files,
+                             atx=atx, orbit_label=label)
         return b, r
 
     while pending:
@@ -390,6 +492,7 @@ def _rank(name: str, controls: dict) -> int:
 
 def _station(o: dict) -> dict:
     return {"name": o["name"], "obs": Path(o["proc_obs"]), "antenna_height": float(o["antenna_height"]),
+            "antenna_type": o.get("antenna_type") or "",
             "first": _dt(o["first"]), "last": _dt(o["last"]),
             "approx_xyz": o.get("approx_xyz") or [0, 0, 0]}
 
@@ -420,6 +523,11 @@ def _adjust_and_report(pdir: Path, prog: Progress) -> None:
         raise ValueError(adj.message)
 
     points = _final_points(p, adj)
+    extra_info = {}
+    if points:
+        st = p["settings"]
+        extra_info = crs.add_extra(points, st.get("extra_crs") or [], points[0]["zone"],
+                                   points[0]["hemisphere"] == "S", st.get("ltp_origin"))
     p = load(pdir)
     p["results"] = {
         "computed": datetime.now(),
@@ -434,6 +542,10 @@ def _adjust_and_report(pdir: Path, prog: Progress) -> None:
         "loops": adj.loops,
         "points": points,
         "geoid": _geoid_info(p),
+        "frame": crs.frame_label(p["settings"].get("frame", "WGS84")),
+        "extra_crs": extra_info,
+        "orbits": _orbit_summary(p),
+        "antennas": sorted({o.get("antenna_type") or "" for o in p["occupations"]} - {""}),
     }
     save(pdir, p)
     prog(95, "Gerando entregáveis (relatório, planilha, KML, CSV, RINEX)")
@@ -449,6 +561,16 @@ def _adjust_and_report(pdir: Path, prog: Progress) -> None:
                     + f" (σ0² = {a['sigma0_sq']:.2f}, crítico {a['f_crit']:.2f}).")
     p["log"].append(f"{datetime.now():%H:%M:%S}  {p['message']}")
     save(pdir, p)
+
+
+def _orbit_summary(p: dict) -> dict:
+    """Órbitas usadas por dia (para relatório/tela)."""
+    used = {}
+    for b in p["baselines"]:
+        r = b.get("result")
+        if r:
+            used.setdefault(b["day"], set()).add(r.get("orbits") or "transmitidas")
+    return {d: ", ".join(sorted(v)) for d, v in sorted(used.items())}
 
 
 def _geoid_info(p: dict) -> dict:

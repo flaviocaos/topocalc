@@ -18,8 +18,9 @@ Linha de comando do TopoCalc.
   # 3) excluir vetores e reajustar sem reprocessar
   python -m topocalc.cli reajustar -p ./projeto --excluir HC102810-HCB8
 
-Controle: "NOME;utm;E;N;FUSO+HEMISFÉRIO;h;H" ou "NOME;geo;LAT;LON;h;H"
-(h elipsoidal; H ortométrica opcional — deixe vazio se não tiver).
+Controle: "NOME;utm;E;N;FUSO+HEMISFÉRIO;h;H", "NOME;geo;LAT;LON;h;H"
+(h elipsoidal; H ortométrica opcional) ou "NOME;ppp;H" para calcular o marco
+por PPP (exige órbitas precisas; H opcional).
 """
 
 from __future__ import annotations
@@ -51,6 +52,8 @@ def _parse_control_arg(s: str) -> dict:
     f = [x.strip() for x in s.split(";")]
     if len(f) < 2:
         raise ValueError(f"Controle inválido: {s}")
+    if f[1].lower() == "ppp":
+        return {"name": f[0], "system": "ppp", "H": f[2] if len(f) > 2 and f[2] else None}
     if f[1].lower() == "utm":
         zone = f[4]
         hem = zone[-1].upper() if zone[-1].isalpha() else "S"
@@ -69,7 +72,11 @@ def cmd_analisar(args) -> int:
             print("Arquivos não encontrados: " + ", ".join(missing), file=sys.stderr)
             return 1
         P.create(pdir, [x.resolve() for x in args.input], [x.resolve() for x in args.precisas or []],
-                 title=args.titulo or "")
+                 title=args.titulo or "", antex_files=[x.resolve() for x in args.antex or []])
+        if args.orbitas:
+            p = P.load(pdir)
+            p["settings"]["orbits"] = "broadcast" if args.orbitas.startswith("trans") else "auto"
+            P.save(pdir, p)
         print("Convertendo para RINEX e analisando…")
         P.analyze(pdir)
     p = P.load(pdir)
@@ -99,8 +106,21 @@ def cmd_processar(args) -> int:
                 o["antenna_height"] = float(alt[key].replace(",", "."))
     if args.controle:
         p["controls"] = [P.parse_control(_parse_control_arg(c)) for c in args.controle]
+    ant = dict(x.split("=", 1) for x in args.antena or [])
+    for o in p["occupations"]:
+        for key in (o["file"], o["name"], o.get("receiver") or ""):
+            if key in ant:
+                o["antenna_type"] = ant[key]
     if args.intervalo:
         p["settings"]["interval_s"] = args.intervalo
+    if args.orbitas:
+        p["settings"]["orbits"] = "broadcast" if args.orbitas.startswith("trans") else "auto"
+    if args.referencial:
+        p["settings"]["frame"] = args.referencial.upper().replace(" ", "")
+    if args.sistemas:
+        p["settings"]["extra_crs"] = [x for x in args.sistemas if x in ("camacupa2015", "ltp")]
+    if args.origem_local:
+        p["settings"]["ltp_origin"] = args.origem_local.upper()
     if args.fuso:
         p["settings"]["utm_zone"] = int(args.fuso.rstrip("SNsn"))
         p["settings"]["hemisphere"] = args.fuso[-1].upper() if args.fuso[-1].isalpha() else None
@@ -174,6 +194,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         s.add_argument("-i", "--input", type=Path, nargs="+", required=need_input, help="arquivos .GNS")
         s.add_argument("--precisas", type=Path, nargs="*", help="órbitas/relógios precisos (SP3, CLK)")
         s.add_argument("--titulo", help="nome do levantamento")
+        s.add_argument("--antex", type=Path, nargs="*", help="arquivos ANTEX adicionais (.atx)")
+        s.add_argument("--orbitas", choices=["auto", "transmitidas"], help="órbitas (padrão auto)")
 
     a = sub.add_parser("analisar", help="converte e mostra arquivos, marcos e linhas de base")
     common(a, True)
@@ -187,6 +209,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     pr.add_argument("--sem-linha", action="append", help="id de linha de base a não processar")
     pr.add_argument("--intervalo", type=int, help="intervalo de processamento em s (padrão 10)")
     pr.add_argument("--fuso", help="fuso UTM de saída, ex.: 33S (padrão automático)")
+    pr.add_argument("--antena", action="append",
+                    help="ARQUIVO_MARCO_OU_RECEPTOR=MODELO ANTEX, ex.: \"V90=HITV90 NONE\"")
+    pr.add_argument("--referencial", choices=["WGS84", "SIRGAS2000", "ITRF"], help="referencial do controle")
+    pr.add_argument("--sistemas", nargs="*", help="sistemas extras: camacupa2015 ltp")
+    pr.add_argument("--origem-local", help="ponto de origem do plano topográfico local")
     pr.set_defaults(fn=cmd_processar)
 
     r = sub.add_parser("reajustar", help="exclui vetores e reajusta sem reprocessar")

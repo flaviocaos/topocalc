@@ -21,7 +21,7 @@ precisam ter <b>o mesmo nome</b> para a rede se ligar.</p>
 <h2>1. Arquivos e marcos</h2>
 <div class="tbl"><table>
 <tr><th>Usar</th><th>Arquivo</th><th>Dia</th><th>Início–fim (GPS)</th><th>Receptor</th><th>Marco</th>
-<th>Altura antena (m)</th><th>Posição aproximada</th><th>Avisos</th></tr>
+<th>Altura antena (m)</th><th>Antena (calibração)</th><th>Posição aproximada</th><th>Avisos</th></tr>
 {% for o in p.occupations %}
 <tr>
   <td><input type="checkbox" name="inc_{{ o.id }}" {{ 'checked' if o.include }}></td>
@@ -31,12 +31,17 @@ precisam ter <b>o mesmo nome</b> para a rede se ligar.</p>
   <td>{{ o.receiver }} <span class="note">{{ 'NovAtel' if o.format=='novatel' else 'Trimble' }}</span></td>
   <td><input type="text" class="md occname" data-occ="{{ o.id }}" name="name_{{ o.id }}" value="{{ o.name }}" required></td>
   <td><input type="text" class="sm" name="ant_{{ o.id }}" value="{{ '%.3f'|format(o.antenna_height) }}"></td>
+  <td><input type="text" class="md" list="antenas" name="atype_{{ o.id }}" value="{{ o.antenna_type or '' }}" placeholder="sem calibração"></td>
   <td class="note">{% if o.approx_llh %}{{ o.approx_llh[0]|dms('lat') }}<br>{{ o.approx_llh[1]|dms('lon') }}{% else %}—{% endif %}</td>
   <td class="note">{{ o.header_warnings|join('; ') }}</td>
 </tr>
 {% endfor %}
 </table></div>
-<p class="note">Altura da antena: vertical, do marco até o ponto de referência da antena (ARP).</p>
+<datalist id="antenas">{% for a in p.antenna_options or [] %}<option value="{{ a.name }}">{{ a.source }}{% if a.l1_up_mm is not none %} — L1 {{ '%.1f'|format(a.l1_up_mm) }} mm{% endif %}</option>{% endfor %}</datalist>
+<p class="note">Altura da antena: vertical, do marco até o ponto de referência da antena (ARP).
+Antena: modelo para a calibração do centro de fase (lista das calibrações IGS/NGS{% if p.antex_user %} e do arquivo enviado{% endif %};
+{{ (p.antenna_options or [])|length }} modelos). Deixe vazio para não aplicar calibração. Para comparar com outro
+programa (ex.: Leica Infinity), use o mesmo modelo de antena nos dois.</p>
 
 <h2>2. Controle (coordenadas conhecidas)</h2>
 <p class="note">Informe pelo menos um marco com coordenadas conhecidas em WGS 84 (ou SIRGAS/ITRF compatível). O nome
@@ -49,9 +54,13 @@ deve ser igual ao do marco na tabela acima. Com a altitude ortométrica H, o geo
     <div><label>Marco</label><input type="text" name="c{{ i }}_name" value="{{ c.name or '' }}" placeholder="ex.: HBD01"></div>
     <div><label>Sistema</label><select name="c{{ i }}_system" onchange="sys(this)">
       <option value="utm" {{ 'selected' if inp.system!='geo' }}>UTM (E, N)</option>
-      <option value="geo" {{ 'selected' if inp.system=='geo' }}>Geográficas (lat, lon)</option></select></div>
+      <option value="geo" {{ 'selected' if inp.system=='geo' }}>Geográficas (lat, lon)</option>
+      <option value="ppp" {{ 'selected' if inp.system=='ppp' }}>Calcular por PPP (sem coordenada conhecida)</option></select></div>
   </div>
-  <div class="row utm" {% if inp.system=='geo' %}style="display:none"{% endif %}>
+  <p class="note pppnote" {% if inp.system!='ppp' %}style="display:none"{% endif %}>O TopoCalc calcula a coordenada deste marco por
+  posicionamento por ponto preciso (PPP), com órbitas e relógios precisos. Precisão típica: 2–3 cm na horizontal e 4–6 cm
+  na altura com 4 h ou mais de rastreio. Se souber a altitude ortométrica H do marco, informe-a abaixo.</p>
+  <div class="row utm" {% if inp.system in ('geo','ppp') %}style="display:none"{% endif %}>
     <div><label>E (m)</label><input type="text" name="c{{ i }}_E" value="{{ inp.E if inp.E is not none else '' }}"></div>
     <div><label>N (m)</label><input type="text" name="c{{ i }}_N" value="{{ inp.N if inp.N is not none else '' }}"></div>
     <div><label>Fuso</label><input type="text" name="c{{ i }}_zone" value="{{ inp.zone or '' }}" placeholder="33"></div>
@@ -101,7 +110,30 @@ deve ser igual ao do marco na tabela acima. Com a altitude ortométrica H, o geo
     <option value="S" {{ 'selected' if p.settings.hemisphere=='S' }}>Sul</option>
     <option value="N" {{ 'selected' if p.settings.hemisphere=='N' }}>Norte</option></select></div>
 </div>
-{% if p.precise %}<p class="note">Órbitas precisas: {% for f in p.precise %}{{ f.split('/')[-1] }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+<div class="row">
+  <div><label>Órbitas</label><select name="orbits">
+    <option value="auto" {{ 'selected' if (p.settings.orbits or 'auto')=='auto' }}>Precisas quando disponíveis (recomendado)</option>
+    <option value="broadcast" {{ 'selected' if p.settings.orbits=='broadcast' }}>Só as transmitidas pelos receptores</option></select></div>
+  <div><label>Referencial das coordenadas do controle</label><select name="frame">
+    <option value="WGS84" {{ 'selected' if (p.settings.frame or 'WGS84')=='WGS84' }}>WGS 84</option>
+    <option value="SIRGAS2000" {{ 'selected' if p.settings.frame=='SIRGAS2000' }}>SIRGAS 2000 (Brasil)</option>
+    <option value="ITRF" {{ 'selected' if p.settings.frame=='ITRF' }}>ITRF / IGS (época do levantamento)</option></select>
+    <p class="note">As coordenadas finais saem no mesmo referencial do controle.</p></div>
+</div>
+<div class="row">
+  <div><label>Sistemas adicionais na saída</label>
+    <label style="font-weight:400"><input type="checkbox" name="extra_crs" value="camacupa2015" {{ 'checked' if 'camacupa2015' in (p.settings.extra_crs or []) }}>
+      Camacupa 2015 / UTM (Angola) — transformação oficial EPSG, precisão ±3 m</label>
+    <label style="font-weight:400"><input type="checkbox" name="extra_crs" value="ltp" {{ 'checked' if 'ltp' in (p.settings.extra_crs or []) }}>
+      Plano topográfico local (E 150 000 / N 250 000 na origem)</label></div>
+  <div><label>Origem do plano local</label><input type="text" name="ltp_origin" value="{{ p.settings.ltp_origin or '' }}" placeholder="primeiro controle"></div>
+</div>
+{% set pa = p.precise_auto or {} %}
+<p class="note"><b>Órbitas precisas encontradas:</b>
+{% if p.precise %}arquivos enviados ({% for f in p.precise %}{{ f.split('/')[-1] }}{{ ', ' if not loop.last }}{% endfor %}).
+{% elif pa %}{% for d, i in pa|dictsort %}{{ d|day }}: {% if i.ok %}{{ i.description }} ({{ i.source }}){% else %}não disponíveis{% endif %}{{ '; ' if not loop.last }}{% endfor %}.
+{% if not (pa.values()|selectattr('ok')|list) %} Sem elas, usam-se as efemérides transmitidas. Produtos rápidos saem ~1 dia depois do rastreio e os finais ~2 semanas depois; ao clicar em Processar, o TopoCalc procura de novo.{% endif %}
+{% else %}nenhuma busca feita.{% endif %}</p>
 </div>
 
 <p style="margin-top:22px">
@@ -111,8 +143,9 @@ deve ser igual ao do marco na tabela acima. Com a altitude ortométrica H, o geo
 </form>
 
 <script>
-function sys(sel){const c=sel.closest('.ctrl');const g=sel.value==='geo';
-  c.querySelector('.utm').style.display=g?'none':'';c.querySelector('.geo').style.display=g?'':'none';}
+function sys(sel){const c=sel.closest('.ctrl');const v=sel.value;
+  c.querySelector('.utm').style.display=v==='utm'?'':'none';c.querySelector('.geo').style.display=v==='geo'?'':'none';
+  c.querySelector('.pppnote').style.display=v==='ppp'?'':'none';}
 function addCtrl(){const box=document.getElementById('ctrls');const src=box.querySelector('.ctrl');
   const n=box.querySelectorAll('.ctrl').length;const c=src.cloneNode(true);
   c.dataset.i=n;c.querySelectorAll('[name]').forEach(e=>{e.name=e.name.replace(/^c\d+_/,'c'+n+'_');

@@ -122,6 +122,25 @@ def health():
     return jsonify(ok=True, version=__version__, rtklib=rtklib.available())
 
 
+@app.route("/diagnostico")
+def diagnostico():
+    """Testa a busca de órbitas precisas e de calibrações de antena (útil após o deploy).
+    ?data=AAAA-MM-DD (padrão: 3 dias atrás)."""
+    from datetime import date, timedelta
+    from .gnss import antenna, orbits
+    try:
+        d = date.fromisoformat(request.args.get("data", ""))
+    except ValueError:
+        d = date.today() - timedelta(days=3)
+    r = orbits.fetch_day(d)
+    ngs = antenna.ngs_atx()
+    hits = [a["name"] for a in antenna.antenna_options() if a["name"].startswith("HIT")]
+    return jsonify(data=d.isoformat(), orbitas=r.ok, produto=r.product, descricao=r.description,
+                   servidor=r.source, tentativas=r.tried, mensagem=r.message,
+                   arquivos=[Path(f).name for f in r.files],
+                   ngs20_atx=bool(ngs), antenas_hitarget=hits, rtklib=rtklib.available())
+
+
 @app.route("/")
 def index():
     _cleanup()
@@ -159,7 +178,13 @@ def create_project():
             dest = inp / secure_filename(f.filename)
             f.save(dest)
             precise.append(dest)
-    P.create(d, saved, precise, title=request.form.get("title", "").strip())
+    antex = []
+    for f in request.files.getlist("antex"):
+        if f and f.filename:
+            dest = inp / secure_filename(f.filename)
+            f.save(dest)
+            antex.append(dest)
+    P.create(d, saved, precise, title=request.form.get("title", "").strip(), antex_files=antex)
     _start(pid, P.analyze)
     return redirect(url_for("project", pid=pid))
 
@@ -209,6 +234,7 @@ def review(pid):
         except ValueError:
             errors.append(f"Altura de antena inválida em {o['file']}.")
         o["include"] = form.get(f"inc_{k}") == "on"
+        o["antenna_type"] = (form.get(f"atype_{k}") or "").strip()
     for b in p["baselines"]:
         b["include"] = form.get(f"bl_{b['id']}") == "on"
         b["excluded"] = False
@@ -231,6 +257,11 @@ def review(pid):
                 raise ValueError("informe E, N e fuso")
             if system == "geo" and (not c["lat"] or not c["lon"]):
                 raise ValueError("informe latitude e longitude")
+            if system == "ppp" and not (p.get("precise") or any(
+                    (v or {}).get("ok") for v in (p.get("precise_auto") or {}).values())):
+                raise ValueError("o PPP precisa de órbitas e relógios precisos, e nenhum foi "
+                                 "encontrado para estes dias. Envie os arquivos SP3/CLK ou informe "
+                                 "as coordenadas do marco.")
             controls.append(P.parse_control(c))
         except (ValueError, TypeError, KeyError) as e:
             errors.append(f"Controle {name}: {e}")
@@ -242,6 +273,10 @@ def review(pid):
         z = form.get("utm_zone", "").strip()
         s["utm_zone"] = int(z) if z else None
         s["hemisphere"] = form.get("hemisphere") or None
+        s["orbits"] = form.get("orbits") or "auto"
+        s["frame"] = form.get("frame") or "WGS84"
+        s["extra_crs"] = [x for x in form.getlist("extra_crs") if x in ("camacupa2015", "ltp")]
+        s["ltp_origin"] = (form.get("ltp_origin") or "").strip().upper() or None
     except ValueError:
         errors.append("Configurações inválidas.")
 

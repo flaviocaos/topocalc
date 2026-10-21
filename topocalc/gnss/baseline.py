@@ -106,6 +106,8 @@ class BaselineResult:
     sigma_v_m: float = 0.0
     notes: list = field(default_factory=list)
     excluded: bool = False
+    orbits: str = ""
+    antennas: list = field(default_factory=list)   # [base, rover]
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -132,7 +134,8 @@ def _last_solution(rows):
 
 def process_baseline(bid: str, day: str, base: dict, rover: dict, navs: list[Path],
                      workdir: Path, base_mark_xyz, interval: int = 10,
-                     precise: Optional[list[Path]] = None) -> BaselineResult:
+                     precise: Optional[list[Path]] = None, atx: Optional[Path] = None,
+                     orbit_label: str = "") -> BaselineResult:
     """base/rover: dict com 'name', 'obs' (Path), 'antenna_height', 'first', 'last',
     'approx_xyz' (marco). base_mark_xyz: coordenada do marco da base usada no
     processamento (controle ou já calculada)."""
@@ -153,9 +156,29 @@ def process_baseline(bid: str, day: str, base: dict, rover: dict, navs: list[Pat
     files = list(navs)
     if precise:
         cfg["pos1-sateph"] = "precise"
-        files += list(precise)
+        # em linha de base o relógio do satélite se cancela: basta a órbita (SP3),
+        # o que economiza memória e tempo (os arquivos CLK de 30 s são grandes)
+        sp3 = [f for f in precise if Path(f).suffix.lower() in (".sp3", ".eph")]
+        files += sp3 or list(precise)
+        res.orbits = orbit_label or "precisas"
+        # órbitas precisas referem-se ao centro de massa do satélite: aplica o
+        # deslocamento até a antena do satélite (igs20 embutido)
+        try:
+            from .antenna import builtin_atx
+            cfg["file-satantfile"] = str(builtin_atx())
+        except OSError:
+            pass
     else:
         cfg["pos1-sateph"] = "brdc"
+        res.orbits = "transmitidas"
+    # calibração das antenas (ANTEX); sem tipo = sem correção de centro de fase
+    if atx and (rover.get("antenna_type") or base.get("antenna_type")):
+        cfg["file-rcvantfile"] = str(atx)
+        if rover.get("antenna_type"):
+            cfg["ant1-anttype"] = rover["antenna_type"]
+        if base.get("antenna_type"):
+            cfg["ant2-anttype"] = base["antenna_type"]
+    res.antennas = [base.get("antenna_type") or "", rover.get("antenna_type") or ""]
     extra = ["-ti", str(interval)]
     R = enu_matrix(lat, lon)
 

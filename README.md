@@ -40,6 +40,19 @@ Funciona pela interface web (Render ou local) e pela linha de comando.
    suspeitos podem ser excluídos e a rede reajustada sem reprocessar.
 6. **Altimetria**: H = h − N, com EGM96 embutido e deslocado para coincidir com
    a ondulação observada nos controles que têm H.
+7. **Órbitas precisas automáticas**: para cada dia de rastreio o TopoCalc baixa
+   órbitas (SP3) e relógios (CLK) do IGS — finais multi-GNSS (CODE, GFZ, Wuhan,
+   CNES) ou rápidos (GFZ, Wuhan, SHAO, CODE) — dos servidores abertos IGN, ENSG,
+   BKG e GFZ (CDDIS com login Earthdata opcional). Se ainda não existirem,
+   usa as efemérides transmitidas e avisa no relatório.
+8. **Calibração de antenas (ANTEX)**: igs20 embutido (satélites e antenas
+   Hi-Target/CHC), ngs20 baixado da NGS e ANTEX enviado pelo usuário. O modelo
+   de antena de cada arquivo é escolhido na revisão.
+9. **PPP da base**: um marco de controle pode ser calculado por PPP estático
+   (órbitas e relógios precisos), quando não há coordenada conhecida.
+10. **Sistemas de saída**: referencial do controle (WGS 84, SIRGAS 2000, ITRF),
+    Camacupa 2015 / UTM (Angola, transformação EPSG ±3 m) e plano topográfico
+    local (tangente na origem).
 7. **Entregáveis**: relatório técnico (.docx e .pdf), planilha (.xlsx com
    coordenadas, geodésicas, linhas de base, resíduos, fechamentos, arquivos e
    controle), KML (pontos + vetores coloridos por solução), CSV e RINEX
@@ -76,6 +89,11 @@ pode ser fechada; o processamento continua no servidor.
 | `TOPOCALC_RTKLIB_DIR` | — | pasta com `convbin` e `rnx2rtkp` (se não estiverem em `topocalc/bin` nem no PATH) |
 | `TOPOCALC_WORKERS` | `2` | linhas de base processadas em paralelo |
 | `TOPOCALC_MAX_UPLOAD_MB` | `1500` | limite do envio |
+| `TOPOCALC_CACHE_DIR` | `<tmp>/topocalc_cache` | cache de órbitas e ANTEX |
+| `TOPOCALC_EARTHDATA_USER` / `_PASSWORD` | — | login Earthdata (NASA) para usar também o CDDIS |
+
+Depois do deploy, abra `/diagnostico?data=AAAA-MM-DD` para conferir se o
+servidor consegue baixar as órbitas daquele dia e as calibrações de antena.
 
 ## Linha de comando
 
@@ -124,10 +142,12 @@ O `render.yaml` cria um serviço Docker. Observações:
 
 ## Limitações conhecidas
 
-- **Calibração de antena** (centro de fase) não é aplicada: os `.GNS` não
-  trazem o modelo da antena. Com modelos diferentes nas pontas, a altura pode
-  variar alguns centímetros.
-- Sem órbitas precisas, o erro de órbita entra com ~0,1–0,5 ppm.
+- **Calibração de antena**: os `.GNS` não trazem o modelo da antena; ele
+  precisa ser escolhido na revisão (sem escolha, nenhuma calibração é aplicada).
+- Sem órbitas precisas (dias muito recentes), o erro de órbita entra com
+  ~0,1–0,5 ppm.
+- PPP sem resolução de ambiguidades: precisão típica de 2–3 cm (horizontal) e
+  4–6 cm (vertical) com 4 h ou mais.
 - GLONASS e BeiDou ficam fora do processamento (GPS + Galileo): o viés
   GLONASS entre receptores de fabricantes diferentes atrapalha a fixação, e
   o BeiDou desses receptores só grava uma frequência.
@@ -147,12 +167,15 @@ topocalc/
     baseline.py      processamento e validação de uma linha de base
     adjust.py        ajustamento em rede, testes estatísticos, triângulos
     geodesy.py       ECEF/geodésicas/UTM, EGM96
+    orbits.py        download de órbitas/relógios precisos (IGS)
+    antenna.py       calibração de antenas (ANTEX)
+    crs.py           referencial, Camacupa 2015, plano topográfico local
     project.py       orquestração (análise, processamento, reajuste)
   reports/           relatório docx/pdf, xlsx, kml, csv, zip RINEX
   templates/, static/  interface web
   web_app.py         Flask
   cli.py             linha de comando
-  data/egm96_15min.npz
+  data/egm96_15min.npz, data/igs20_topocalc.atx.gz
 tests/               testes (o de dados reais usa TOPOCALC_TEST_DATA)
 ```
 

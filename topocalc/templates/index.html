@@ -19,9 +19,13 @@ projeto ou defina <code>TOPOCALC_RTKLIB_DIR</code>.</div>
   <input type="file" name="gns" multiple required accept=".gns,.GNS">
   <p class="note">Pode selecionar vários de uma vez. Arquivos grandes podem levar alguns minutos para enviar.</p>
   <label>Órbitas e relógios precisos (opcional)</label>
-  <input type="file" name="precise" multiple accept=".sp3,.SP3,.clk,.CLK,.sp3.gz,.clk.gz">
-  <p class="note">Arquivos SP3 e CLK (ex.: GFZ/IGS rápidos ou finais) do(s) dia(s) do rastreio. Melhoram linhas
-  acima de ~20 km. Sem eles, usam-se as efemérides transmitidas gravadas pelos receptores.</p>
+  <input type="file" name="precise" multiple accept=".sp3,.SP3,.clk,.CLK,.gz,.Z,.eph,.EPH">
+  <p class="note">Normalmente não é preciso: o TopoCalc baixa sozinho as órbitas e relógios precisos (IGS) dos dias
+  do rastreio. Use este campo só para impor arquivos SP3/CLK específicos (ex.: os mesmos usados em outro programa).</p>
+  <label>Calibração de antenas — ANTEX (opcional)</label>
+  <input type="file" name="antex" multiple accept=".atx,.ATX">
+  <p class="note">O TopoCalc já traz as calibrações do IGS e busca as da NGS. Envie um arquivo .atx só se a antena dos
+  receptores não estiver nessas listas.</p>
   <p style="margin-top:16px"><button class="btn" type="submit">Enviar e analisar</button></p>
 </form>
 

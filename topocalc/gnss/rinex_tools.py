@@ -133,7 +133,8 @@ def obs_summary(obs: Path) -> dict:
 
 
 def patch_header(obs: Path, approx_xyz: Optional[Iterable[float]] = None,
-                 marker: Optional[str] = None, antenna_height: Optional[float] = None) -> None:
+                 marker: Optional[str] = None, antenna_height: Optional[float] = None,
+                 antenna_type: Optional[str] = None) -> None:
     lines = obs.read_text(errors="ignore").splitlines(keepends=True)
     for i, ln in enumerate(lines):
         lab = ln[60:].strip()
@@ -144,6 +145,10 @@ def patch_header(obs: Path, approx_xyz: Optional[Iterable[float]] = None,
             lines[i] = "%-60s%-20s\n" % ("%14.4f%14.4f%14.4f" % (x, y, z), "APPROX POSITION XYZ")
         elif lab == "MARKER NAME" and marker:
             lines[i] = "%-60s%-20s\n" % (marker[:60], "MARKER NAME")
+        elif lab == "ANT # / TYPE" and antenna_type:
+            t = antenna_type.split()
+            name = "%-16s%-4s" % (t[0], t[1] if len(t) > 1 else "NONE")
+            lines[i] = "%-60s%-20s\n" % ("%-20s%-20s" % ("", name), "ANT # / TYPE")
         elif lab == "ANTENNA: DELTA H/E/N" and antenna_height is not None:
             lines[i] = "%-60s%-20s\n" % ("%14.4f%14.4f%14.4f" % (antenna_height, 0, 0),
                                           "ANTENNA: DELTA H/E/N")
