@@ -114,50 +114,91 @@ def _names(d: date, product: str, orb_smp: list[str], clk_smp: list[str]):
 # ------------------------------------------------------------ download
 
 URS_HOST = "urs.earthdata.nasa.gov"
+CDDIS_HOST = "cddis.nasa.gov"
 _COOKIES = None
 
 
-class _EarthdataRedirect(urllib.request.HTTPRedirectHandler):
-    """Ao ser redirecionado para o login da NASA (URS), envia usuário e senha
-    (Basic) diretamente — o mesmo que o curl -n -L faz. Nos demais
-    servidores o cabeçalho de autenticação nunca é enviado."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is None:
-            return None
-        host = urllib.parse.urlparse(newurl).hostname or ""
-        new.remove_header("Authorization")
-        _auth(new, host)
-        return new
-
-
-NASA_HOSTS = (URS_HOST, "cddis.nasa.gov")
-
-
-def _auth(req, host: str) -> None:
-    """Credenciais Earthdata só para os servidores da NASA (CDDIS e URS)."""
-    if host not in NASA_HOSTS:
-        return
-    user = os.environ.get("TOPOCALC_EARTHDATA_USER", "")
-    pwd = os.environ.get("TOPOCALC_EARTHDATA_PASSWORD", "")
-    if user and pwd:
-        tok = base64.b64encode(f"{user}:{pwd}".encode()).decode()
-        req.add_unredirected_header("Authorization", f"Basic {tok}")
-
-
-def _request(url: str):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    _auth(req, urllib.parse.urlparse(url).hostname or "")
-    return req
-
-
-def _opener():
+def _cookies():
     global _COOKIES
     if _COOKIES is None:
         _COOKIES = http.cookiejar.CookieJar()   # sessão da NASA reaproveitada entre downloads
-    return urllib.request.build_opener(_EarthdataRedirect(),
-                                       urllib.request.HTTPCookieProcessor(_COOKIES))
+    return _COOKIES
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Redirecionamentos são seguidos à mão em _open (como no exemplo oficial
+    do CDDIS), para controlar exatamente onde as credenciais vão."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _basic() -> str:
+    user = os.environ.get("TOPOCALC_EARTHDATA_USER", "").strip()
+    pwd = os.environ.get("TOPOCALC_EARTHDATA_PASSWORD", "").strip()
+    if not (user and pwd):
+        return ""
+    return "Basic " + base64.b64encode(f"{user}:{pwd}".encode()).decode()
+
+
+def _token() -> str:
+    return os.environ.get("TOPOCALC_EARTHDATA_TOKEN", "").strip()
+
+
+def _headers_for(host: str, use_token: bool) -> dict:
+    """Usuário e senha só vão para o login da NASA (URS); o token (opcional)
+    só para o CDDIS. Nenhum outro servidor recebe credenciais."""
+    h = {"User-Agent": USER_AGENT}
+    if host == URS_HOST and _basic():
+        h["Authorization"] = _basic()
+    elif host == CDDIS_HOST and use_token and _token():
+        h["Authorization"] = "Bearer " + _token()
+    return h
+
+
+def _open(url: str, trace: Optional[list] = None, use_token: bool = False):
+    """Abre url seguindo até 10 redirecionamentos à mão. Devolve a resposta
+    (status 200). Levanta HTTPError/URLError como o urllib."""
+    opener = urllib.request.build_opener(
+        _NoRedirect(), urllib.request.HTTPCookieProcessor(_cookies()))
+    cur = url
+    for _ in range(10):
+        host = urllib.parse.urlparse(cur).hostname or ""
+        req = urllib.request.Request(cur, headers=_headers_for(host, use_token))
+        try:
+            r = opener.open(req, timeout=TIMEOUT)
+            if trace is not None:
+                trace.append(f"{r.status} {host}")
+            return r
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location") if e.headers else None
+            if trace is not None:
+                extra = ""
+                if e.headers and e.headers.get("WWW-Authenticate"):
+                    extra = " WWW-Authenticate=" + e.headers.get("WWW-Authenticate")[:80]
+                trace.append(f"{e.code} {host}{' -> ' + urllib.parse.urlparse(loc).hostname if loc else ''}{extra}")
+            if e.code in (301, 302, 303, 307, 308) and loc:
+                nxt = urllib.parse.urljoin(cur, loc)
+                if nxt.startswith("http://") and (urllib.parse.urlparse(nxt).hostname or "").endswith("nasa.gov"):
+                    nxt = "https://" + nxt[len("http://"):]
+                cur = nxt
+                continue
+            raise
+    raise urllib.error.URLError("redirecionamentos demais")
+
+
+def _open_any(url: str, trace: Optional[list] = None):
+    """CDDIS: tenta usuário/senha (fluxo oficial) e, se houver token e der 401,
+    tenta o token Bearer."""
+    host = urllib.parse.urlparse(url).hostname or ""
+    if host == CDDIS_HOST and _token() and not _basic():
+        return _open(url, trace, use_token=True)
+    try:
+        return _open(url, trace)
+    except urllib.error.HTTPError as e:
+        if host == CDDIS_HOST and e.code == 401 and _token():
+            return _open(url, trace, use_token=True)
+        raise
 
 
 OK, MISSING, DEAD = "ok", "missing", "dead"
@@ -174,10 +215,9 @@ def _stat(url: str, what: str) -> None:
 def _download(url: str, dest: Path) -> str:
     """Baixa url em dest. Retorna OK, MISSING (servidor respondeu, arquivo não
     existe) ou DEAD (servidor inacessível — não adianta tentar outros arquivos nele)."""
-    req = _request(url)
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        with _opener().open(req, timeout=TIMEOUT) as r, open(tmp, "wb") as f:
+        with _open_any(url) as r, open(tmp, "wb") as f:
             ctype = r.headers.get("Content-Type", "")
             if "text/html" in ctype:      # página de login/erro em vez do arquivo
                 tmp.unlink(missing_ok=True)
@@ -372,22 +412,32 @@ def files_for(precise_auto: dict, t0: datetime, t1: datetime) -> list[str]:
 
 def test_cddis(d: date) -> dict:
     """Testa o acesso ao CDDIS (login Earthdata) lendo a lista da semana GPS."""
-    if not os.environ.get("TOPOCALC_EARTHDATA_USER"):
+    if not (_basic() or _token()):
         return {"configurado": False}
     url = f"https://cddis.nasa.gov/archive/gnss/products/{gps_week(d)}/"
-    req = _request(url)
+    trace: list = []
+    base = {"configurado": True, "usuario": os.environ.get("TOPOCALC_EARTHDATA_USER", "").strip(),
+            "senha_definida": bool(os.environ.get("TOPOCALC_EARTHDATA_PASSWORD", "").strip()),
+            "token_definido": bool(_token()), "caminho": trace}
     try:
-        with _opener().open(req, timeout=TIMEOUT) as r:
+        with _open_any(url, trace) as r:
             body = r.read(400000).decode("utf-8", "ignore")
             final = r.geturl()
     except urllib.error.HTTPError as e:
-        return {"configurado": True, "status": e.code, "url": url, "erro": str(e)}
+        dica = ""
+        if e.code == 401 and any(URS_HOST in t for t in trace):
+            dica = "Login NASA recusou usuário/senha: confira TOPOCALC_EARTHDATA_USER e _PASSWORD no Render (sem espaços)."
+        elif e.code == 401:
+            dica = "CDDIS recusou sem redirecionar ao login: gere um token em urs.earthdata.nasa.gov e coloque em TOPOCALC_EARTHDATA_TOKEN."
+        elif e.code == 403:
+            dica = "Conta sem autorização para o CDDIS: entre uma vez pelo navegador e aceite os termos."
+        return {**base, "status": e.code, "url": url, "erro": str(e), "dica": dica}
     except (urllib.error.URLError, OSError) as e:
-        return {"configurado": True, "status": "sem resposta", "url": url, "erro": str(e)[:200]}
+        return {**base, "status": "sem resposta", "url": url, "erro": str(e)[:200]}
     import re
     names = sorted(set(re.findall(r"[A-Z]{3}0[A-Z]{3}[A-Z]{3}_\d{11}_\d\dD_\d\d[SMHD]_(?:ORB|CLK)\.\w+\.gz", body)))
     doy = f"{d.year}{d.timetuple().tm_yday:03d}"
-    return {"configurado": True, "status": 200, "url_final": final,
+    return {**base, "status": 200, "url_final": final,
             "login_ok": URS_HOST not in final and bool(names),
             "arquivos_na_semana": len(names),
             "arquivos_do_dia": [n for n in names if doy in n][:30]}
