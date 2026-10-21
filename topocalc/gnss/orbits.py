@@ -22,13 +22,16 @@ para não baixar de novo o mesmo dia.
 
 from __future__ import annotations
 
+import base64
 import gzip
+import http.cookiejar
 import os
 import shutil
 import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -110,20 +113,47 @@ def _names(d: date, product: str, orb_smp: list[str], clk_smp: list[str]):
 
 # ------------------------------------------------------------ download
 
+URS_HOST = "urs.earthdata.nasa.gov"
+_COOKIES = None
+
+
+class _EarthdataRedirect(urllib.request.HTTPRedirectHandler):
+    """Ao ser redirecionado para o login da NASA (URS), envia usuário e senha
+    (Basic) diretamente — o mesmo que o curl -n -L faz. Nos demais
+    servidores o cabeçalho de autenticação nunca é enviado."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        host = urllib.parse.urlparse(newurl).hostname or ""
+        new.remove_header("Authorization")
+        if host == URS_HOST:
+            user = os.environ.get("TOPOCALC_EARTHDATA_USER", "")
+            pwd = os.environ.get("TOPOCALC_EARTHDATA_PASSWORD", "")
+            if user and pwd:
+                tok = base64.b64encode(f"{user}:{pwd}".encode()).decode()
+                new.add_unredirected_header("Authorization", f"Basic {tok}")
+        return new
+
+
 def _opener():
-    handlers = []
-    user = os.environ.get("TOPOCALC_EARTHDATA_USER")
-    pwd = os.environ.get("TOPOCALC_EARTHDATA_PASSWORD")
-    if user and pwd:
-        mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-        mgr.add_password(None, "https://urs.earthdata.nasa.gov", user, pwd)
-        handlers.append(urllib.request.HTTPBasicAuthHandler(mgr))
-        handlers.append(urllib.request.HTTPCookieProcessor())
-    return urllib.request.build_opener(*handlers)
+    global _COOKIES
+    if _COOKIES is None:
+        _COOKIES = http.cookiejar.CookieJar()   # sessão da NASA reaproveitada entre downloads
+    return urllib.request.build_opener(_EarthdataRedirect(),
+                                       urllib.request.HTTPCookieProcessor(_COOKIES))
 
 
 OK, MISSING, DEAD = "ok", "missing", "dead"
 _LOG: list[str] = []      # últimas tentativas (para o diagnóstico)
+STATS: dict = {}          # servidor -> {resultado: quantidade}
+
+
+def _stat(url: str, what: str) -> None:
+    host = urllib.parse.urlparse(url).hostname or "?"
+    d = STATS.setdefault(host, {})
+    d[what] = d.get(what, 0) + 1
 
 
 def _download(url: str, dest: Path) -> str:
@@ -136,16 +166,21 @@ def _download(url: str, dest: Path) -> str:
             ctype = r.headers.get("Content-Type", "")
             if "text/html" in ctype:      # página de login/erro em vez do arquivo
                 tmp.unlink(missing_ok=True)
+                final = urllib.parse.urlparse(r.geturl()).hostname or ""
+                _LOG.append(f"html({final}) {url}")
+                _stat(url, "html-login" if final == URS_HOST else "html")
                 return MISSING
             shutil.copyfileobj(r, f)
     except urllib.error.HTTPError as e:
         tmp.unlink(missing_ok=True)
         _LOG.append(f"{e.code} {url}")
+        _stat(url, str(e.code))
         return MISSING if e.code in (401, 403, 404, 410) else DEAD
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         tmp.unlink(missing_ok=True)
         msg = str(getattr(e, "reason", e))
         _LOG.append(f"erro {msg[:80]} {url}")
+        _stat(url, "sem resposta")
         # FTP: "550 arquivo inexistente" significa servidor vivo
         if url.startswith("ftp://") and ("550" in msg or "No such file" in msg):
             return MISSING
@@ -155,6 +190,7 @@ def _download(url: str, dest: Path) -> str:
         return MISSING
     os.replace(tmp, dest)
     _LOG.append(f"ok {url}")
+    _stat(url, "ok")
     return OK
 
 
@@ -317,3 +353,26 @@ def files_for(precise_auto: dict, t0: datetime, t1: datetime) -> list[str]:
             return []            # falta um dia: melhor usar só as transmitidas
         files += info["files"]
     return files
+
+
+def test_cddis(d: date) -> dict:
+    """Testa o acesso ao CDDIS (login Earthdata) lendo a lista da semana GPS."""
+    if not os.environ.get("TOPOCALC_EARTHDATA_USER"):
+        return {"configurado": False}
+    url = f"https://cddis.nasa.gov/archive/gnss/products/{gps_week(d)}/"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with _opener().open(req, timeout=TIMEOUT) as r:
+            body = r.read(400000).decode("utf-8", "ignore")
+            final = r.geturl()
+    except urllib.error.HTTPError as e:
+        return {"configurado": True, "status": e.code, "url": url, "erro": str(e)}
+    except (urllib.error.URLError, OSError) as e:
+        return {"configurado": True, "status": "sem resposta", "url": url, "erro": str(e)[:200]}
+    import re
+    names = sorted(set(re.findall(r"[A-Z]{3}0[A-Z]{3}[A-Z]{3}_\d{11}_\d\dD_\d\d[SMHD]_(?:ORB|CLK)\.\w+\.gz", body)))
+    doy = f"{d.year}{d.timetuple().tm_yday:03d}"
+    return {"configurado": True, "status": 200, "url_final": final,
+            "login_ok": URS_HOST not in final and bool(names),
+            "arquivos_na_semana": len(names),
+            "arquivos_do_dia": [n for n in names if doy in n][:30]}

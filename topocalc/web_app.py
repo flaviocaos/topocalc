@@ -133,6 +133,8 @@ def diagnostico():
     except ValueError:
         d = date.today() - timedelta(days=3)
     orbits._LOG.clear()
+    orbits.STATS.clear()
+    cddis = orbits.test_cddis(d)
     r = orbits.fetch_day(d)
     ngs = antenna.ngs_atx()
     hits = [a["name"] for a in antenna.antenna_options() if a["name"].startswith("HIT")]
@@ -140,6 +142,7 @@ def diagnostico():
                    servidor=r.source, tentativas=r.tried, mensagem=r.message,
                    arquivos=[Path(f).name for f in r.files],
                    ngs20_atx=bool(ngs), antenas_hitarget=hits, rtklib=rtklib.available(),
+                   teste_cddis=cddis, por_servidor=orbits.STATS,
                    ultimas_tentativas=list(orbits._LOG[-25:]))
 
 
