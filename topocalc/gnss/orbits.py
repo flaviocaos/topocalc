@@ -128,13 +128,28 @@ class _EarthdataRedirect(urllib.request.HTTPRedirectHandler):
             return None
         host = urllib.parse.urlparse(newurl).hostname or ""
         new.remove_header("Authorization")
-        if host == URS_HOST:
-            user = os.environ.get("TOPOCALC_EARTHDATA_USER", "")
-            pwd = os.environ.get("TOPOCALC_EARTHDATA_PASSWORD", "")
-            if user and pwd:
-                tok = base64.b64encode(f"{user}:{pwd}".encode()).decode()
-                new.add_unredirected_header("Authorization", f"Basic {tok}")
+        _auth(new, host)
         return new
+
+
+NASA_HOSTS = (URS_HOST, "cddis.nasa.gov")
+
+
+def _auth(req, host: str) -> None:
+    """Credenciais Earthdata só para os servidores da NASA (CDDIS e URS)."""
+    if host not in NASA_HOSTS:
+        return
+    user = os.environ.get("TOPOCALC_EARTHDATA_USER", "")
+    pwd = os.environ.get("TOPOCALC_EARTHDATA_PASSWORD", "")
+    if user and pwd:
+        tok = base64.b64encode(f"{user}:{pwd}".encode()).decode()
+        req.add_unredirected_header("Authorization", f"Basic {tok}")
+
+
+def _request(url: str):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    _auth(req, urllib.parse.urlparse(url).hostname or "")
+    return req
 
 
 def _opener():
@@ -159,7 +174,7 @@ def _stat(url: str, what: str) -> None:
 def _download(url: str, dest: Path) -> str:
     """Baixa url em dest. Retorna OK, MISSING (servidor respondeu, arquivo não
     existe) ou DEAD (servidor inacessível — não adianta tentar outros arquivos nele)."""
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = _request(url)
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
         with _opener().open(req, timeout=TIMEOUT) as r, open(tmp, "wb") as f:
@@ -360,7 +375,7 @@ def test_cddis(d: date) -> dict:
     if not os.environ.get("TOPOCALC_EARTHDATA_USER"):
         return {"configurado": False}
     url = f"https://cddis.nasa.gov/archive/gnss/products/{gps_week(d)}/"
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = _request(url)
     try:
         with _opener().open(req, timeout=TIMEOUT) as r:
             body = r.read(400000).decode("utf-8", "ignore")
