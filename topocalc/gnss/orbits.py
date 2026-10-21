@@ -156,15 +156,23 @@ def _headers_for(host: str, use_token: bool) -> dict:
     return h
 
 
+_LOGIN_FAILED = {"senha": None}   # senha recusada pela NASA nesta execução
+
+
 def _open(url: str, trace: Optional[list] = None, use_token: bool = False):
     """Abre url seguindo até 10 redirecionamentos à mão. Devolve a resposta
-    (status 200). Levanta HTTPError/URLError como o urllib."""
+    (status 200). Levanta HTTPError/URLError como o urllib.
+    Se a NASA recusar a senha uma vez, não tenta de novo com a mesma senha
+    (cada tentativa errada conta para o bloqueio da conta Earthdata)."""
     opener = urllib.request.build_opener(
         _NoRedirect(), urllib.request.HTTPCookieProcessor(_cookies()))
     cur = url
     for _ in range(10):
         host = urllib.parse.urlparse(cur).hostname or ""
-        req = urllib.request.Request(cur, headers=_headers_for(host, use_token))
+        hdrs = _headers_for(host, use_token)
+        if host == URS_HOST and hdrs.get("Authorization") and _LOGIN_FAILED["senha"] == hdrs["Authorization"]:
+            raise urllib.error.HTTPError(cur, 401, "senha NASA já recusada (não repetida)", None, None)
+        req = urllib.request.Request(cur, headers=hdrs)
         try:
             r = opener.open(req, timeout=TIMEOUT)
             if trace is not None:
@@ -177,6 +185,8 @@ def _open(url: str, trace: Optional[list] = None, use_token: bool = False):
                 if e.headers and e.headers.get("WWW-Authenticate"):
                     extra = " WWW-Authenticate=" + e.headers.get("WWW-Authenticate")[:80]
                 trace.append(f"{e.code} {host}{' -> ' + urllib.parse.urlparse(loc).hostname if loc else ''}{extra}")
+            if e.code == 401 and host == URS_HOST and hdrs.get("Authorization"):
+                _LOGIN_FAILED["senha"] = hdrs["Authorization"]
             if e.code in (301, 302, 303, 307, 308) and loc:
                 nxt = urllib.parse.urljoin(cur, loc)
                 if nxt.startswith("http://") and (urllib.parse.urlparse(nxt).hostname or "").endswith("nasa.gov"):
