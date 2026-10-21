@@ -399,9 +399,11 @@ def _process(pdir: Path, prog: Progress) -> None:
         for o in [o for o in occ.values() if o["name"] == c["name"]]:
             t0, t1 = _dt(o["first"]), _dt(o["last"])
             files, label = precise_for(t0, t1)
-            if not files:
-                raise ValueError(f"PPP de {c['name']}: não há órbitas e relógios precisos para "
-                                 f"{t0:%d/%m/%Y}. Envie os arquivos SP3/CLK ou informe as coordenadas.")
+            if not files or not orbits.has_clocks(files):
+                raise ValueError(f"PPP de {c['name']}: ainda não há relógios precisos (CLK) para "
+                                 f"{t0:%d/%m/%Y} — os produtos rápidos/finais do IGS saem de 1 a 15 dias "
+                                 "depois do rastreio. Tente mais tarde, envie os arquivos SP3/CLK ou "
+                                 "informe as coordenadas do marco.")
             prog(1, f"PPP de {c['name']} ({o['file']}, {(t1 - t0).total_seconds() / 3600:.1f} h)")
             r = rtklib.ppp_static(Path(o["proc_obs"]), [Path(p["navs"][o["day"]])], files, atx,
                                   work / f"ppp_{o['id']}.pos", float(o["antenna_height"]),

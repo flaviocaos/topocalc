@@ -51,6 +51,9 @@ PRODUCTS = [
     ("COD0OPSFIN", ["05M"], ["30S", "05M"], "CODE final"),
     ("IGS0OPSFIN", ["15M"], ["30S", "05M"], "IGS final (combinado)"),
     ("IGS0OPSRAP", ["15M"], ["05M"], "IGS rápido (combinado)"),
+    # ultra-rápido: só órbita (a metade observada tem ~3 cm, suficiente para linhas
+    # de base); não tem relógio de 30 s, então não serve para PPP
+    ("IGS0OPSULT", ["15M"], [], "IGS ultra-rápido (só órbita)"),
 ]
 
 
@@ -94,7 +97,8 @@ def _dirs(d: date, product: str) -> list[str]:
 
 def _names(d: date, product: str, orb_smp: list[str], clk_smp: list[str]):
     ymd = f"{d.year}{d.timetuple().tm_yday:03d}0000"
-    orbs = [f"{product}_{ymd}_01D_{s}_ORB.SP3.gz" for s in orb_smp]
+    span = "02D" if product.endswith("ULT") else "01D"
+    orbs = [f"{product}_{ymd}_{span}_{s}_ORB.SP3.gz" for s in orb_smp]
     clks = [f"{product}_{ymd}_01D_{s}_CLK.CLK.gz" for s in clk_smp]
     return orbs, clks
 
@@ -238,20 +242,25 @@ def fetch_day(d: date, dead: Optional[set] = None, products: Optional[list] = No
     plist = list(products or PRODUCTS)
     if (date.today() - d).days < 12:
         # finais ainda não saíram: tenta primeiro os rápidos (economiza dezenas de tentativas)
-        plist.sort(key=lambda x: 0 if x[0].endswith("RAP") else 1)
+        plist.sort(key=lambda x: 0 if x[0].endswith("RAP") else 2 if x[0].endswith("ULT") else 1)
     for product, orb_smp, clk_smp, desc in plist:
         orbs, clks = _names(d, product, orb_smp, clk_smp)
         cached_orb = next((cdir / o[:-3] for o in orbs if _valid_sp3(cdir / o[:-3])), None)
         cached_clk = next((cdir / c[:-3] for c in clks if _valid_clk(cdir / c[:-3])), None)
-        if cached_orb and cached_clk:
+        if cached_orb and (cached_clk or not clks):
             res.product, res.description, res.source = product, desc, "cache"
-            res.files = [str(cached_orb), str(cached_clk)]
+            res.files = [str(cached_orb)] + ([str(cached_clk)] if cached_clk else [])
             return res
         for base in _dirs(d, product):
             orb = cached_orb or _get(base, orbs, cdir, _valid_sp3, dead, res)
             if not orb:
                 continue
-            clk = cached_clk or _get(base, clks, cdir, _valid_clk, dead, res)
+            clk = cached_clk or (_get(base, clks, cdir, _valid_clk, dead, res) if clks else None)
+            if not clk and not clks:
+                res.product, res.description = product, desc
+                res.source = base.split("/")[2]
+                res.files = [str(orb)]
+                return res
             if not clk:
                 cached_orb = orb      # guarda a órbita e tenta o relógio em outro servidor
                 continue
@@ -288,6 +297,10 @@ def fetch_for_project(intervals: Iterable[tuple[datetime, datetime]]) -> dict[st
                               "files": r.files, "source": r.source, "message": r.message,
                               "seconds": round(time.time() - t, 1)}
     return out
+
+
+def has_clocks(files: Iterable[str]) -> bool:
+    return any(str(f).upper().endswith(".CLK") for f in files)
 
 
 def files_for(precise_auto: dict, t0: datetime, t1: datetime) -> list[str]:
