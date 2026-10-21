@@ -41,19 +41,32 @@ Funciona pela interface web (Render ou local) e pela linha de comando.
 6. **Altimetria**: H = h − N, com EGM96 embutido e deslocado para coincidir com
    a ondulação observada nos controles que têm H.
 7. **Órbitas precisas automáticas**: para cada dia de rastreio o TopoCalc baixa
-   órbitas (SP3) e relógios (CLK) do IGS — finais multi-GNSS (CODE, GFZ, Wuhan,
-   CNES) ou rápidos (GFZ, Wuhan, SHAO, CODE) — dos servidores abertos IGN, ENSG,
-   BKG e GFZ (CDDIS com login Earthdata opcional). Se ainda não existirem,
-   usa as efemérides transmitidas e avisa no relatório.
+   órbitas (SP3) e relógios (CLK) do IGS, sempre o melhor produto disponível:
+   - **finais** multi-GNSS (CODE, GFZ, Wuhan, CNES, ESA) — ~2 semanas depois;
+   - **rápidos** (GFZ, Wuhan, SHAO, CODE, IGS) — ~1 dia depois;
+   - **ultra-rápidos** do IGS (só órbita, ~3 cm) — no mesmo dia.
+
+   Servidores, nesta ordem: **CDDIS/NASA** (arquivo oficial do IGS; exige conta
+   Earthdata gratuita — o login segue o fluxo oficial da NASA: a senha vai só
+   para o login Earthdata, nunca para outros servidores, e uma senha recusada
+   não é repetida, para não bloquear a conta), espelhos de Wuhan, IGN/ENSG e BKG, e os servidores da
+   ESA, CODE e GFZ. Um servidor que não responde é pulado. Os arquivos ficam em
+   cache. Se ainda não houver nada, usa as efemérides transmitidas e avisa.
+   Quando sair um produto melhor, o botão **"Buscar órbitas melhores e
+   reprocessar"** refaz tudo mantendo nomes, alturas, antenas e controle.
+   Também é possível enviar SP3/CLK próprios (ex.: os mesmos de outro programa).
 8. **Calibração de antenas (ANTEX)**: igs20 embutido (satélites e antenas
-   Hi-Target/CHC), ngs20 baixado da NGS e ANTEX enviado pelo usuário. O modelo
-   de antena de cada arquivo é escolhido na revisão.
+   Hi-Target/CHC), ngs20 baixado da NGS (inclui HITV90, HITV200 e outros
+   modelos Hi-Target) e ANTEX enviado pelo usuário. O modelo de antena de cada
+   arquivo é escolhido na revisão; o botão "Usar as antenas sugeridas" preenche
+   pelo código do modelo gravado no `.GNS` (ex.: V90 → `HITV90 NONE`,
+   D8 Pro → `HITV200 NONE`).
 9. **PPP da base**: um marco de controle pode ser calculado por PPP estático
    (órbitas e relógios precisos), quando não há coordenada conhecida.
 10. **Sistemas de saída**: referencial do controle (WGS 84, SIRGAS 2000, ITRF),
     Camacupa 2015 / UTM (Angola, transformação EPSG ±3 m) e plano topográfico
     local (tangente na origem).
-7. **Entregáveis**: relatório técnico (.docx e .pdf), planilha (.xlsx com
+11. **Entregáveis**: relatório técnico (.docx e .pdf), planilha (.xlsx com
    coordenadas, geodésicas, linhas de base, resíduos, fechamentos, arquivos e
    controle), KML (pontos + vetores coloridos por solução), CSV e RINEX
    (obs + navegação por dia, com marco, antena e posição no cabeçalho).
@@ -61,11 +74,12 @@ Funciona pela interface web (Render ou local) e pela linha de comando.
 ### Validação
 
 Testado com o levantamento HCB (Angola, out/2026: 12 arquivos, 3 dias, 15
-linhas de 0,04 a 35 km, receptores D8 Pro e V90). Comparado ao processamento
-no Leica Infinity com órbitas precisas: diferenças de 0–2 cm na horizontal e
-até ~9 cm na altura elipsoidal nos pontos a 50 km do controle — dentro das
-precisões (2σ) que o próprio TopoCalc informa para esses pontos. Para linhas
-acima de ~20 km, envie órbitas e relógios precisos (SP3 + CLK) para melhorar.
+linhas de 0,04 a 35 km, receptores D8 Pro e V90). Com **efemérides
+transmitidas e sem calibração de antena**, comparado ao Leica Infinity (órbitas
+precisas): 0–2 cm na horizontal na maioria dos pontos (até 4 cm nos pontos só
+com vetores flutuantes) e até ~9 cm na altura elipsoidal nos pontos a 50 km do
+controle. Linhas curtas (< 10 km) fixam e batem em milímetros. A comparação com
+órbitas finais e calibração de antena está em andamento.
 
 ## Interface web
 
@@ -90,10 +104,26 @@ pode ser fechada; o processamento continua no servidor.
 | `TOPOCALC_WORKERS` | `2` | linhas de base processadas em paralelo |
 | `TOPOCALC_MAX_UPLOAD_MB` | `1500` | limite do envio |
 | `TOPOCALC_CACHE_DIR` | `<tmp>/topocalc_cache` | cache de órbitas e ANTEX |
-| `TOPOCALC_EARTHDATA_USER` / `_PASSWORD` | — | login Earthdata (NASA) para usar também o CDDIS |
+| `TOPOCALC_EARTHDATA_USER` / `_PASSWORD` | — | conta Earthdata (NASA) para baixar do CDDIS. **Recomendado**: é a fonte mais completa de órbitas. Conta gratuita em https://urs.earthdata.nasa.gov. A senha é a da conta Earthdata (não a do TopoCalc) |
+| `TOPOCALC_EARTHDATA_TOKEN` | — | opcional: token Earthdata (gerado no perfil), usado se usuário/senha forem recusados. Vence a cada 60 dias |
+| `TOPOCALC_DOWNLOAD_TIMEOUT` | `60` | tempo máximo (s) de cada download |
+| `TOPOCALC_OFFLINE` | — | se definida, não baixa as calibrações da NGS |
 
 Depois do deploy, abra `/diagnostico?data=AAAA-MM-DD` para conferir se o
-servidor consegue baixar as órbitas daquele dia e as calibrações de antena.
+servidor consegue baixar as órbitas daquele dia e as calibrações de antena. O
+resultado mostra o produto encontrado, o teste de login no CDDIS
+(`teste_cddis`), o que cada servidor respondeu (`por_servidor`) e as últimas
+tentativas. Em `teste_cddis`:
+
+- `"login_ok": true` e `"status": 200` — login NASA funcionando;
+- `caminho` mostra cada etapa (`302 cddis → urs`, `302 urs → cddis`, `200 cddis`);
+- se terminar em `401 urs.earthdata.nasa.gov`, a NASA recusou usuário/senha:
+  confira `TOPOCALC_EARTHDATA_PASSWORD` (digite à mão, sem aspas/espaços) e
+  teste o login em https://urs.earthdata.nasa.gov. Muitas tentativas erradas
+  bloqueiam a conta por 10 minutos.
+
+Exemplo (HCB, 08/10/2026): `"produto": "COD0MGXFIN"` (CODE final multi-GNSS,
+órbita 5 min + relógio 30 s), baixado do CDDIS em 3 tentativas.
 
 ## Linha de comando
 
@@ -131,12 +161,17 @@ cp app/consapp/convbin/gcc/convbin app/consapp/rnx2rtkp/gcc/rnx2rtkp <TopoCalc>/
 O `render.yaml` cria um serviço Docker. Observações:
 
 - **Plano**: o processamento usa CPU. No *free* (0,1 CPU) um levantamento de
-  um dia leva dezenas de minutos e o serviço hiberna sem uso. Use *starter*
-  ou, melhor, *standard*.
+  um dia leva dezenas de minutos e o serviço hiberna após 15 min sem acesso.
+  Enquanto uma página do TopoCalc estiver aberta, ela avisa o servidor a cada
+  4 minutos e ele não hiberna — **mantenha a página aberta** durante a revisão e
+  o processamento. Para uso diário, *starter* ou *standard*.
+- **Conta da NASA**: defina `TOPOCALC_EARTHDATA_USER` e
+  `TOPOCALC_EARTHDATA_PASSWORD` para as órbitas virem do CDDIS.
 - **Senha**: defina `TOPOCALC_PASSWORD` no painel — sem ela qualquer pessoa
   com o link pode enviar arquivos.
-- **Arquivos**: o disco do Render é apagado a cada deploy/reinício. Baixe o
-  pacote ao terminar, ou adicione um disco persistente montado em `/data`.
+- **Arquivos**: o disco do Render é apagado a cada deploy, reinício ou
+  hibernação (projetos e cache de órbitas). Baixe o pacote ao terminar, ou
+  adicione um disco persistente (planos pagos) montado em `/data`.
 - Um único processo (`gunicorn -w 1 --threads 8`): as tarefas rodam em
   segundo plano dentro dele. Não aumente `-w`.
 
@@ -144,8 +179,9 @@ O `render.yaml` cria um serviço Docker. Observações:
 
 - **Calibração de antena**: os `.GNS` não trazem o modelo da antena; ele
   precisa ser escolhido na revisão (sem escolha, nenhuma calibração é aplicada).
-- Sem órbitas precisas (dias muito recentes), o erro de órbita entra com
-  ~0,1–0,5 ppm.
+- Sem órbitas precisas (dias muito recentes ou servidores fora do ar), o erro
+  de órbita entra com ~0,1–0,5 ppm. O PPP exige relógios precisos (produto
+  rápido ou final); com a órbita ultra-rápida só as linhas de base melhoram.
 - PPP sem resolução de ambiguidades: precisão típica de 2–3 cm (horizontal) e
   4–6 cm (vertical) com 4 h ou mais.
 - GLONASS e BeiDou ficam fora do processamento (GPS + Galileo): o viés
