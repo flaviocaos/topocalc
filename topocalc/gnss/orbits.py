@@ -286,9 +286,19 @@ def _valid_sp3(p: Path) -> bool:
 
 def _valid_clk(p: Path) -> bool:
     try:
+        # o cabeçalho dos relógios de 30 s lista centenas de estações e
+        # satélites (dezenas de kB): lê até achar o fim do cabeçalho
         with open(p, "r", errors="ignore") as f:
-            head = f.read(4000)
-        return "RINEX VERSION / TYPE" in head and "END OF HEADER" in head
+            first = f.readline()
+            if "RINEX VERSION / TYPE" not in first:
+                return False
+            for i, line in enumerate(f):
+                if "END OF HEADER" in line:
+                    nxt = f.readline()
+                    return nxt[:2] in ("AS", "AR", "CR", "DR", "MS")
+                if i > 20000:
+                    return False
+        return False
     except OSError:
         return False
 
